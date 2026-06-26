@@ -20,8 +20,8 @@ import { useState } from "react";
 export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
-      { title: "Settings — Stellar" },
-      { name: "description", content: "Manage your account, keys, relays, wallet and privacy on Stellar." },
+      { title: "Settings — Crays" },
+      { name: "description", content: "Manage your account, keys, relays, wallet and privacy on Crays." },
     ],
   }),
   component: Settings,
@@ -49,7 +49,7 @@ function Settings() {
   const [showKey, setShowKey] = useState(false);
 
   return (
-    <PageShell title="Settings" subtitle="Tune Stellar to your taste — keys, relays, notifications and more.">
+    <PageShell title="Settings" subtitle="Tune Crays to your taste — keys, relays, notifications and more.">
       <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
         {/* Side nav */}
         <aside className="space-y-1 rounded-2xl bg-white p-2 shadow-card ring-1 ring-black/5 lg:self-start">
@@ -95,8 +95,8 @@ function Settings() {
             <div className="mt-6 grid gap-5 sm:grid-cols-2">
               <Field label="Display name" defaultValue="Alex Stellar" />
               <Field label="Handle" defaultValue="alex" prefix="@" />
-              <Field label="Lightning address" defaultValue="alex@stellar.app" />
-              <Field label="Website" defaultValue="https://stellar.app/alex" />
+              <Field label="Lightning address" defaultValue="alex@crays.net" />
+              <Field label="Website" defaultValue="https://stellar.app" />
               <div className="sm:col-span-2">
                 <Label>Bio</Label>
                 <textarea
@@ -175,21 +175,18 @@ function Settings() {
               <PrefRow title="Replies & mentions" desc="People talking to you" on />
               <PrefRow title="New followers" desc="When someone follows you" on />
               <PrefRow title="Premium subscribers" desc="New paid subscribers" on />
-              <PrefRow title="Weekly digest" desc="A Sunday summary by email" />
+              {/* <PrefRow title="Weekly digest" desc="A Sunday summary by email" /> */}
             </ul>
           </Panel>
 
           {/* Danger zone */}
-          <Panel title="Danger zone" desc="Irreversible actions. Be careful." tone="danger">
+          <Panel title="Logout" tone="">
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-rose-50/60 p-4 ring-1 ring-rose-200/60">
               <div>
-                <p className="text-[13px] font-semibold text-rose-700">Delete account</p>
-                <p className="text-[11.5px] text-rose-600/80">
-                  Your posts will remain on Nostr relays unless you delete them individually.
-                </p>
+                <p className="text-[13px] font-semibold text-rose-700">You can sign-out to change account and return anytime using your Nostr identity keys.</p>
               </div>
               <button className="rounded-lg bg-rose-600 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-rose-700">
-                Delete account
+                Disconnect
               </button>
             </div>
           </Panel>

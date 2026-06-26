@@ -17,11 +17,11 @@ import {
 export const Route = createFileRoute("/premium")({
   head: () => ({
     meta: [
-      { title: "Premium — Stellar" },
+      { title: "Premium — Crays" },
       {
         name: "description",
         content:
-          "Become a Stellar Creator — paid subscribers, long-form publishing, your own link-in-bio page and free trials, all on Nostr.",
+          "Become a Crays Creator — paid subscribers, long-form publishing, your own link-in-bio page and free trials, all on Nostr.",
       },
     ],
   }),
@@ -58,7 +58,7 @@ function Premium() {
         <div className="relative grid gap-8 sm:grid-cols-[1.4fr_1fr] sm:items-end">
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider backdrop-blur-sm">
-              <Crown className="size-3 text-amber-300" /> Stellar Creator
+              <Crown className="size-3 text-amber-300" /> Crays Creator
             </span>
             <h2 className="mt-4 text-balance text-[28px] font-semibold leading-[1.1] tracking-tight sm:text-[36px]">
               Turn your audience into a sustainable business.
@@ -75,12 +75,12 @@ function Premium() {
               </button>
             </div>
           </div>
-          <dl className="grid grid-cols-3 gap-3">
-            <Metric icon={Users} label="Subscribers" value="142k" />
-            <Metric icon={Zap} label="Paid out" value="2.4B" suffix="sats" />
-            <Metric icon={TrendingUp} label="Avg. growth" value="+18%" />
-          </dl>
         </div>
+        <dl className="grid grid-cols-3 gap-3 mt-5">
+          <Metric icon={Users} label="Subscribers" value="142k" />
+          <Metric icon={Zap} label="Paid out" value="2.4B" suffix="sats" />
+          <Metric icon={TrendingUp} label="Avg. growth" value="+18%" />
+        </dl>
       </section>
 
       {/* Single plan */}
@@ -147,7 +147,7 @@ function Premium() {
       </section>
 
       {/* Active subscriptions */}
-      <section className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 sm:p-6">
+      {/* <section className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 sm:p-6">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
             Creators you support
@@ -174,7 +174,7 @@ function Premium() {
             </li>
           ))}
         </ul>
-      </section>
+      </section> */}
     </PageShell>
   );
 }

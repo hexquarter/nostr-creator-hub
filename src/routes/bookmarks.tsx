@@ -6,7 +6,7 @@ import { Bookmark, FolderPlus } from "lucide-react";
 export const Route = createFileRoute("/bookmarks")({
   head: () => ({
     meta: [
-      { title: "Bookmarks — Stellar" },
+      { title: "Bookmarks — Crays" },
       { name: "description", content: "Posts and articles you've saved for later, organized into private collections." },
     ],
   }),

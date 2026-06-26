@@ -6,7 +6,7 @@ import { ArrowDownLeft, ArrowUpRight, Zap, Plus, QrCode, CreditCard } from "luci
 export const Route = createFileRoute("/wallet")({
   head: () => ({
     meta: [
-      { title: "Wallet — Stellar" },
+      { title: "Wallet — Crays" },
       { name: "description", content: "Your Lightning wallet — send, receive and zap creators with one tap." },
     ],
   }),
@@ -58,7 +58,7 @@ function WalletPage() {
               <FauxQR />
             </div>
             <p className="mt-3 max-w-[180px] truncate text-center font-mono text-[10.5px] text-zinc-400">
-              you@stellar.app
+              you@crays.net
             </p>
             <button className="mt-1 text-[10.5px] font-semibold text-amber-300 hover:underline">
               Copy lightning address

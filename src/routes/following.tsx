@@ -7,8 +7,8 @@ import { UserPlus, Filter } from "lucide-react";
 export const Route = createFileRoute("/following")({
   head: () => ({
     meta: [
-      { title: "Following — Stellar" },
-      { name: "description", content: "A focused feed of the creators you follow on Stellar." },
+      { title: "Following — Crays" },
+      { name: "description", content: "A focused feed of the creators you follow on Crays." },
     ],
   }),
   component: Following,

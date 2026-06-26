@@ -26,8 +26,8 @@ import {
 export const Route = createFileRoute("/profile")({
   head: () => ({
     meta: [
-      { title: "Profile — Stellar" },
-      { name: "description", content: "Your Stellar profile — posts, premium articles, link-in-bio and free trial." },
+      { title: "Profile — Crays" },
+      { name: "description", content: "Your Crays profile — posts, premium articles, link-in-bio and free trial." },
     ],
   }),
   component: Profile,
@@ -46,11 +46,11 @@ const socials = [
   { id: "ig", label: "Instagram", handle: "@alex.stellar", icon: Camera, color: "text-fuchsia-600", bg: "bg-fuchsia-50" },
   { id: "gh", label: "GitHub", handle: "alexstellar", icon: Code2, color: "text-zinc-900", bg: "bg-zinc-100" },
   { id: "sp", label: "Spotify", handle: "Stellar Sounds", icon: Music2, color: "text-emerald-600", bg: "bg-emerald-50" },
-  { id: "site", label: "Website", handle: "stellar.app/alex", icon: Globe, color: "text-brand", bg: "bg-brand/10" },
+  { id: "site", label: "Website", handle: "stellar.app", icon: Globe, color: "text-brand", bg: "bg-brand/10" },
 ];
 
 const linkBlocks = [
-  { title: "New essay · The Liquidity Inflection", sub: "Read on Stellar Premium", icon: Sparkles, accent: true },
+  { title: "New essay · The Liquidity Inflection", sub: "Read on Crays Premium", icon: Sparkles, accent: true },
   { title: "Subscribe to the newsletter", sub: "Weekly macro + Bitcoin", icon: Mail },
   { title: "Latest podcast episode", sub: "Lightning UX with Elena Vega", icon: Music2 },
   { title: "Book a 1:1 call", sub: "30 min · 50k sats", icon: Calendar },
@@ -126,7 +126,7 @@ function Profile() {
                 <Crown className="size-3" /> Creator
               </span>
             </h2>
-            <p className="text-[13px] text-zinc-500">@alex · alex@stellar.app</p>
+            <p className="text-[13px] text-zinc-500">alex@crays.net</p>
             <p className="mt-3 max-w-xl text-pretty text-[14px] leading-relaxed text-zinc-700">
               Building the open creator economy. Long-form on macro, Bitcoin and design. Powered by zaps, not ads.
             </p>
@@ -136,7 +136,7 @@ function Profile() {
               </li>
               <li className="inline-flex items-center gap-1.5">
                 <LinkIcon className="size-3.5" />
-                <a href="#" className="text-brand hover:underline">stellar.app/alex</a>
+                <a href="#" className="text-brand hover:underline">crays.net/alex</a>
               </li>
               <li className="inline-flex items-center gap-1.5">
                 <Calendar className="size-3.5" /> Joined Mar 2023
@@ -196,7 +196,7 @@ function Profile() {
               </h3>
               <p className="mt-0.5 text-[12px] text-zinc-500">
                 A Linktree-style page hosted at{" "}
-                <span className="font-mono text-zinc-700">stellar.app/alex</span>
+                <span className="font-mono text-zinc-700">link.crays.net/alex</span>
               </p>
             </div>
             <button className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-black">
@@ -276,7 +276,7 @@ function Profile() {
               Live preview
             </p>
             <a href="#" className="text-[11px] font-semibold text-brand hover:underline">
-              stellar.app/alex ↗
+              stellar.app ↗
             </a>
           </div>
           <div className="mx-auto max-w-[280px] overflow-hidden rounded-[28px] bg-white p-5 shadow-elevated ring-1 ring-black/10">
@@ -327,7 +327,7 @@ function Profile() {
               <button className="mt-4 w-full rounded-xl bg-zinc-900 py-2 text-[11.5px] font-semibold text-white">
                 Subscribe · 7-day free trial
               </button>
-              <p className="mt-1 text-[9.5px] text-zinc-400">Powered by Stellar · Nostr + Lightning</p>
+              <p className="mt-1 text-[9.5px] text-zinc-400">Powered by Crays · Nostr + Lightning</p>
             </div>
           </div>
         </div>

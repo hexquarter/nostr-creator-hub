@@ -6,7 +6,7 @@ import { Search, Zap, Paperclip, Smile, Send, ShieldCheck, Plus } from "lucide-r
 export const Route = createFileRoute("/messages")({
   head: () => ({
     meta: [
-      { title: "Messages — Stellar" },
+      { title: "Messages — Crays" },
       { name: "description", content: "End-to-end encrypted DMs over Nostr, with Lightning built in." },
     ],
   }),

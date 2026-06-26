@@ -6,8 +6,8 @@ import { Zap, Repeat2, MessageCircle, UserPlus, AtSign, Check } from "lucide-rea
 export const Route = createFileRoute("/notifications")({
   head: () => ({
     meta: [
-      { title: "Notifications — Stellar" },
-      { name: "description", content: "Zaps, replies, follows and mentions across your Stellar feed." },
+      { title: "Notifications — Crays" },
+      { name: "description", content: "Zaps, replies, follows and mentions across your Crays feed." },
     ],
   }),
   component: Notifications,

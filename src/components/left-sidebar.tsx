@@ -26,6 +26,8 @@ const nav = [
   { to: "/settings", icon: Settings, label: "Settings" },
 ] as const;
 
+import logo from '../assets/crays-logo.svg'
+
 export function LeftSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
@@ -33,10 +35,11 @@ export function LeftSidebar() {
     <aside className="sticky top-0 hidden h-screen flex-col py-6 lg:flex">
       {/* Logo */}
       <Link to="/" className="mb-8 flex items-center gap-2.5 px-3">
-        <div className="grid size-9 place-items-center rounded-xl bg-brand shadow-brand">
+        {/* <div className="grid size-9 place-items-center rounded-xl bg-brand shadow-brand">
           <div className="size-3.5 rotate-45 rounded-[3px] bg-white/90" />
-        </div>
-        <span className="text-[15px] font-semibold tracking-tight">Stellar</span>
+        </div> */}
+        {/* <span className="text-[15px] font-semibold tracking-tight">Stellar</span> */}
+        <img src={logo} className="h-7"/>
       </Link>
 
       {/* Nav */}

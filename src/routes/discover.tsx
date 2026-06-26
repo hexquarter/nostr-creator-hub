@@ -18,7 +18,7 @@ import {
 export const Route = createFileRoute("/discover")({
   head: () => ({
     meta: [
-      { title: "Discover — Stellar" },
+      { title: "Discover — Crays" },
       {
         name: "description",
         content: "Discover top creators, trending zaps, and rising voices across Bitcoin and Nostr.",

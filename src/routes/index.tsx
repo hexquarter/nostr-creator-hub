@@ -10,13 +10,13 @@ import { MobileNav } from "@/components/mobile-nav";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Stellar — A premium Nostr social client for Bitcoin creators" },
+      { title: "Crays — A premium Nostr social client for Bitcoin creators" },
       {
         name: "description",
         content:
           "Follow creators, unlock premium content with Lightning, and grow a paid audience on the open Nostr protocol.",
       },
-      { property: "og:title", content: "Stellar — Nostr for Bitcoin creators" },
+      { property: "og:title", content: "Crays — Nostr for Bitcoin creators" },
       {
         property: "og:description",
         content:
