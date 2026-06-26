@@ -1,46 +1,40 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageShell } from "@/components/page-shell";
 import { AvatarTile } from "@/components/avatar-tile";
-import { Crown, Zap, Check, Sparkles, TrendingUp, Users } from "lucide-react";
+import {
+  Crown,
+  Zap,
+  Check,
+  Sparkles,
+  TrendingUp,
+  Users,
+  Link as LinkIcon,
+  FileText,
+  Mic,
+  BarChart3,
+} from "lucide-react";
 
 export const Route = createFileRoute("/premium")({
   head: () => ({
     meta: [
       { title: "Premium — Stellar" },
-      { name: "description", content: "Subscribe to creators with Lightning. Unlock long-form articles, private circles, and live spaces." },
+      {
+        name: "description",
+        content:
+          "Become a Stellar Creator — paid subscribers, long-form publishing, your own link-in-bio page and free trials, all on Nostr.",
+      },
     ],
   }),
   component: Premium,
 });
 
-const tiers = [
-  {
-    name: "Reader",
-    price: "Free",
-    period: "",
-    blurb: "Follow creators, send zaps, and read public posts.",
-    features: ["Unlimited follows", "Send & receive zaps", "Public articles", "Encrypted DMs"],
-    cta: "Current plan",
-    accent: false,
-  },
-  {
-    name: "Supporter",
-    price: "$5",
-    period: "/mo",
-    blurb: "Unlock premium posts across every creator you follow.",
-    features: ["Everything in Reader", "Premium-post bundle access", "Ad-free reading", "Bookmark collections"],
-    cta: "Upgrade",
-    accent: true,
-  },
-  {
-    name: "Creator",
-    price: "$19",
-    period: "/mo",
-    blurb: "Run a paid newsletter, host spaces, and grow a subscriber base.",
-    features: ["Paid subscriber tiers", "Long-form publishing", "Spaces hosting", "Analytics dashboard"],
-    cta: "Become a creator",
-    accent: false,
-  },
+const features = [
+  { icon: Users, title: "Paid subscribers", desc: "Recurring monthly subscribers with one-tap Lightning checkout." },
+  { icon: FileText, title: "Long-form publishing", desc: "Premium articles, paywalled posts and full-length essays." },
+  { icon: LinkIcon, title: "Link-in-bio page", desc: "A beautiful, Linktree-style page hosted at stellar.app/you." },
+  { icon: Sparkles, title: "Free trial offers", desc: "Let new fans preview your premium content before paying." },
+  { icon: Mic, title: "Spaces hosting", desc: "Run live audio rooms for subscribers — or open to everyone." },
+  { icon: BarChart3, title: "Analytics dashboard", desc: "Track MRR, churn, top posts and where your zaps come from." },
 ];
 
 const subs = [
@@ -51,7 +45,7 @@ const subs = [
 
 function Premium() {
   return (
-    <PageShell title="Premium" subtitle="Pay creators directly. No middlemen. No platform cut.">
+    <PageShell title="Premium" subtitle="One plan. Everything you need to run a paid audience on Nostr.">
       {/* Hero */}
       <section className="relative overflow-hidden rounded-2xl bg-zinc-900 p-6 text-white shadow-elevated sm:p-10">
         <div
@@ -64,20 +58,20 @@ function Premium() {
         <div className="relative grid gap-8 sm:grid-cols-[1.4fr_1fr] sm:items-end">
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider backdrop-blur-sm">
-              <Crown className="size-3 text-amber-300" /> Stellar Premium
+              <Crown className="size-3 text-amber-300" /> Stellar Creator
             </span>
             <h2 className="mt-4 text-balance text-[28px] font-semibold leading-[1.1] tracking-tight sm:text-[36px]">
-              Support the creators building the open web.
+              Turn your audience into a sustainable business.
             </h2>
             <p className="mt-3 max-w-lg text-[14px] text-zinc-300">
-              Subscribe with Lightning. 100% of every sat goes to the creator — no platform takes a cut, ever.
+              Subscriptions, paywalls, a link-in-bio page and free trials — built on Lightning, powered by Nostr. 100% of every sat goes to you.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <button className="rounded-full bg-white px-5 py-2.5 text-[13px] font-semibold text-zinc-900 hover:bg-zinc-100">
-                Browse creators
+                Start 14-day free trial
               </button>
               <button className="rounded-full bg-white/10 px-5 py-2.5 text-[13px] font-semibold text-white ring-1 ring-white/20 hover:bg-white/20">
-                Become a creator
+                See a creator page
               </button>
             </div>
           </div>
@@ -89,56 +83,74 @@ function Premium() {
         </div>
       </section>
 
-      {/* Tiers */}
-      <section className="grid gap-4 lg:grid-cols-3">
-        {tiers.map((t) => (
+      {/* Single plan */}
+      <section className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">
+        <div className="relative flex flex-col overflow-hidden rounded-2xl bg-zinc-900 p-7 text-white shadow-elevated ring-1 ring-zinc-800">
           <div
-            key={t.name}
-            className={`relative flex flex-col rounded-2xl p-6 transition-shadow ${
-              t.accent
-                ? "bg-zinc-900 text-white shadow-elevated ring-1 ring-zinc-800"
-                : "bg-white shadow-card ring-1 ring-black/5"
-            }`}
-          >
-            {t.accent && (
-              <span className="absolute right-5 top-5 inline-flex items-center gap-1 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-950">
-                <Sparkles className="size-2.5" /> Popular
-              </span>
-            )}
-            <h3 className={`text-[14px] font-semibold ${t.accent ? "text-white" : "text-zinc-900"}`}>{t.name}</h3>
-            <div className="mt-3 flex items-baseline gap-1">
-              <span className={`text-[32px] font-semibold tracking-tight ${t.accent ? "text-white" : "text-zinc-900"}`}>
-                {t.price}
-              </span>
-              <span className={`text-[12px] ${t.accent ? "text-zinc-400" : "text-zinc-500"}`}>{t.period}</span>
+            className="absolute inset-0 opacity-50"
+            style={{
+              background:
+                "radial-gradient(at 0% 0%, oklch(0.7 0.2 50 / 0.4) 0, transparent 55%), radial-gradient(at 100% 100%, oklch(0.55 0.22 260 / 0.35) 0, transparent 55%)",
+            }}
+          />
+          <div className="relative">
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-950">
+              <Sparkles className="size-2.5" /> Creator plan
+            </span>
+            <div className="mt-4 flex items-baseline gap-1.5">
+              <span className="text-[48px] font-semibold leading-none tracking-tight">$49</span>
+              <span className="text-[13px] text-zinc-400">/ month</span>
             </div>
-            <p className={`mt-2 text-[12.5px] ${t.accent ? "text-zinc-300" : "text-zinc-500"}`}>{t.blurb}</p>
-            <ul className="my-6 space-y-2.5">
-              {t.features.map((f) => (
-                <li key={f} className="flex items-start gap-2 text-[12.5px]">
-                  <Check className={`mt-0.5 size-3.5 shrink-0 ${t.accent ? "text-amber-300" : "text-emerald-500"}`} strokeWidth={3} />
-                  <span className={t.accent ? "text-zinc-200" : "text-zinc-700"}>{f}</span>
+            <p className="mt-2 text-[13px] text-zinc-300">Cancel anytime. 14-day free trial included.</p>
+
+            <button className="mt-6 w-full rounded-xl bg-white py-3 text-[13.5px] font-semibold text-zinc-900 transition-colors hover:bg-zinc-100">
+              Start free trial
+            </button>
+            <p className="mt-2 text-center text-[11px] text-zinc-400">
+              No card required · pay with Lightning, card, or sats
+            </p>
+
+            <ul className="mt-6 space-y-3 border-t border-white/10 pt-5">
+              {[
+                "Paid subscriber tiers (sats or USD)",
+                "Long-form premium publishing",
+                "Hosted link-in-bio page",
+                "Free trial offers for subscribers",
+                "Spaces hosting & live audio",
+                "Analytics dashboard & exports",
+                "Priority creator support",
+              ].map((f) => (
+                <li key={f} className="flex items-start gap-2.5 text-[13px]">
+                  <Check className="mt-0.5 size-4 shrink-0 text-amber-300" strokeWidth={3} />
+                  <span className="text-zinc-200">{f}</span>
                 </li>
               ))}
             </ul>
-            <button
-              className={`mt-auto rounded-xl py-2.5 text-[13px] font-semibold transition-colors ${
-                t.accent
-                  ? "bg-white text-zinc-900 hover:bg-zinc-100"
-                  : "bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
-              }`}
-            >
-              {t.cta}
-            </button>
           </div>
-        ))}
+        </div>
+
+        {/* Feature grid */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {features.map((f) => (
+            <div
+              key={f.title}
+              className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 transition-shadow hover:shadow-elevated"
+            >
+              <div className="grid size-9 place-items-center rounded-xl bg-brand/10 text-brand">
+                <f.icon className="size-4.5" strokeWidth={2.2} />
+              </div>
+              <h4 className="mt-3 text-[13.5px] font-semibold text-zinc-900">{f.title}</h4>
+              <p className="mt-1 text-[12px] leading-relaxed text-zinc-500">{f.desc}</p>
+            </div>
+          ))}
+        </div>
       </section>
 
       {/* Active subscriptions */}
       <section className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 sm:p-6">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-            Your subscriptions
+            Creators you support
           </h3>
           <span className="text-[11px] text-zinc-400">3 active · 36k sats / mo</span>
         </div>
