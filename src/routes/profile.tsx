@@ -17,7 +17,7 @@ import {
   Globe,
   Youtube,
   Github,
-  Twitter,
+  Twitter as Twitter,
   Instagram,
   Music2,
   Mail,
