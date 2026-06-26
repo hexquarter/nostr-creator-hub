@@ -180,7 +180,7 @@ function Settings() {
           </Panel>
 
           {/* Danger zone */}
-          <Panel title="Logout" tone="">
+          <Panel title="Logout">
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-rose-50/60 p-4 ring-1 ring-rose-200/60">
               <div>
                 <p className="text-[13px] font-semibold text-rose-700">You can sign-out to change account and return anytime using your Nostr identity keys.</p>

@@ -82,7 +82,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "author", content: "HexQuarter" },
       { property: "og:title", content: "Crays" },
       { property: "og:description", content: "Modern Nostr client for content creator" },
-      { property: "og:type", content: "website" }
+      { property: "og:type", content: "website" },
       { name: "twitter:title", content: "Crays" },
       { name: "twitter:description", content: "Modern Nostr client for content creator" },
       { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/014e3174-965f-4775-becf-9afc96a9a4ad/id-preview-f6e10ca6--7d8a80f5-99c1-4c98-953d-a1b4e5d3d68d.lovable.app-1782484609355.png" },
