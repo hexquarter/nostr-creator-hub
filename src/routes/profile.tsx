@@ -15,10 +15,10 @@ import {
   Sparkles,
   Zap,
   Globe,
-  Youtube,
-  Github,
-  Twitter as Twitter,
-  Instagram,
+  Play,
+  Code2,
+  AtSign,
+  Camera,
   Music2,
   Mail,
 } from "lucide-react";
@@ -41,10 +41,10 @@ const stats = [
 ];
 
 const socials = [
-  { id: "x", label: "X (Twitter)", handle: "@alexstellar", icon: Twitter, color: "text-zinc-900", bg: "bg-zinc-100" },
-  { id: "yt", label: "YouTube", handle: "Alex Stellar", icon: Youtube, color: "text-rose-600", bg: "bg-rose-50" },
-  { id: "ig", label: "Instagram", handle: "@alex.stellar", icon: Instagram, color: "text-fuchsia-600", bg: "bg-fuchsia-50" },
-  { id: "gh", label: "GitHub", handle: "alexstellar", icon: Github, color: "text-zinc-900", bg: "bg-zinc-100" },
+  { id: "x", label: "X (Twitter)", handle: "@alexstellar", icon: AtSign, color: "text-zinc-900", bg: "bg-zinc-100" },
+  { id: "yt", label: "YouTube", handle: "Alex Stellar", icon: Play, color: "text-rose-600", bg: "bg-rose-50" },
+  { id: "ig", label: "Instagram", handle: "@alex.stellar", icon: Camera, color: "text-fuchsia-600", bg: "bg-fuchsia-50" },
+  { id: "gh", label: "GitHub", handle: "alexstellar", icon: Code2, color: "text-zinc-900", bg: "bg-zinc-100" },
   { id: "sp", label: "Spotify", handle: "Stellar Sounds", icon: Music2, color: "text-emerald-600", bg: "bg-emerald-50" },
   { id: "site", label: "Website", handle: "stellar.app/alex", icon: Globe, color: "text-brand", bg: "bg-brand/10" },
 ];
