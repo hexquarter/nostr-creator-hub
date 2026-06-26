@@ -29,6 +29,3 @@ export function ComingSoon({ title, blurb }: { title: string; blurb: string }) {
   );
 }
 
-// Re-export as a barrel for tiny route stubs
-export const stub = (title: string, blurb: string) =>
-  createFileRoute as unknown as never; // placeholder, unused
