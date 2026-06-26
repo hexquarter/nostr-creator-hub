@@ -61,7 +61,7 @@ function Messages() {
                     <p className="line-clamp-1 text-[12px] text-zinc-500">{t.preview}</p>
                   </div>
                   {t.unread > 0 && (
-                    <span className="mt-1 grid size-4.5 min-w-[18px] place-items-center rounded-full bg-brand px-1 text-[10px] font-bold text-white">
+                    <span className="mt-1 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-brand px-1 text-[10px] font-bold text-white">
                       {t.unread}
                     </span>
                   )}
