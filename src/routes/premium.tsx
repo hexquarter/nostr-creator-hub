@@ -137,7 +137,7 @@ function Premium() {
               className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 transition-shadow hover:shadow-elevated"
             >
               <div className="grid size-9 place-items-center rounded-xl bg-brand/10 text-brand">
-                <f.icon className="size-4.5" strokeWidth={2.2} />
+                <f.icon className="size-[18px]" strokeWidth={2.2} />
               </div>
               <h4 className="mt-3 text-[13.5px] font-semibold text-zinc-900">{f.title}</h4>
               <p className="mt-1 text-[12px] leading-relaxed text-zinc-500">{f.desc}</p>
