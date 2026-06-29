@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageShell } from "@/components/page-shell";
 import { AvatarTile } from "@/components/avatar-tile";
+import { useUI } from "@/components/modals/ui-provider";
+import { toast } from "sonner";
 import { PostCard, type Post } from "@/components/post-card";
 import { PremiumPost } from "@/components/premium-post";
 import {
