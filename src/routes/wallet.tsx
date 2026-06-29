@@ -2,6 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageShell } from "@/components/page-shell";
 import { AvatarTile } from "@/components/avatar-tile";
 import { ArrowDownLeft, ArrowUpRight, Zap, Plus, QrCode, CreditCard } from "lucide-react";
+import { useUI } from "@/components/modals/ui-provider";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/wallet")({
   head: () => ({
@@ -23,6 +25,7 @@ const txs = [
 ];
 
 function WalletPage() {
+  const ui = useUI();
   return (
     <PageShell title="Wallet" subtitle="Self-custodial Lightning — your keys, your sats.">
       {/* Balance card */}
