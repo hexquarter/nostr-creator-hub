@@ -79,7 +79,10 @@ function Messages() {
               </li>
             ))}
           </ul>
-          <button className="m-4 inline-flex items-center justify-center gap-1.5 rounded-xl bg-zinc-900 py-2.5 text-[12.5px] font-semibold text-white hover:bg-black">
+          <button
+            onClick={ui.openNewDM}
+            className="m-4 inline-flex items-center justify-center gap-1.5 rounded-xl bg-zinc-900 py-2.5 text-[12.5px] font-semibold text-white hover:bg-black"
+          >
             <Plus className="size-3.5" /> New message
           </button>
         </aside>
@@ -96,7 +99,10 @@ function Messages() {
                 </p>
               </div>
             </div>
-            <button className="rounded-lg bg-amber-50 px-3 py-1.5 text-[11.5px] font-semibold text-amber-700 hover:bg-amber-100 inline-flex items-center gap-1">
+            <button
+              onClick={() => ui.openZap({ recipient: "Lyn Alden" })}
+              className="rounded-lg bg-amber-50 px-3 py-1.5 text-[11.5px] font-semibold text-amber-700 hover:bg-amber-100 inline-flex items-center gap-1"
+            >
               <Zap className="size-3.5" /> Zap
             </button>
           </header>
@@ -147,21 +153,24 @@ function Messages() {
 
           <div className="border-t border-zinc-100 p-3">
             <div className="flex items-end gap-2 rounded-xl bg-zinc-100/80 p-2">
-              <button className="grid size-9 place-items-center rounded-lg text-zinc-400 hover:bg-white hover:text-zinc-700">
+              <button onClick={ui.openImagePicker} className="grid size-9 place-items-center rounded-lg text-zinc-400 hover:bg-white hover:text-zinc-700">
                 <Paperclip className="size-4" />
               </button>
               <textarea
                 rows={1}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } }}
                 placeholder="Write an encrypted message…"
                 className="min-h-9 flex-1 resize-none bg-transparent py-2 text-[13.5px] text-zinc-900 outline-none placeholder:text-zinc-400"
               />
-              <button className="grid size-9 place-items-center rounded-lg text-zinc-400 hover:bg-white hover:text-zinc-700">
+              <button onClick={() => toast("😀 picker")} className="grid size-9 place-items-center rounded-lg text-zinc-400 hover:bg-white hover:text-zinc-700">
                 <Smile className="size-4" />
               </button>
-              <button className="grid size-9 place-items-center rounded-lg text-amber-500 hover:bg-amber-50">
+              <button onClick={() => ui.openZap({ recipient: "Lyn Alden" })} className="grid size-9 place-items-center rounded-lg text-amber-500 hover:bg-amber-50">
                 <Zap className="size-4" strokeWidth={2.4} />
               </button>
-              <button className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3.5 py-2 text-[12.5px] font-semibold text-white hover:bg-brand/90">
+              <button onClick={sendMsg} className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3.5 py-2 text-[12.5px] font-semibold text-white hover:bg-brand/90">
                 <Send className="size-3.5" /> Send
               </button>
             </div>
