@@ -16,6 +16,8 @@ import {
   EyeOff,
 } from "lucide-react";
 import { useState } from "react";
+import { useUI } from "@/components/modals/ui-provider";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -47,6 +49,7 @@ const relays = [
 
 function Settings() {
   const [showKey, setShowKey] = useState(false);
+  const ui = useUI();
 
   return (
     <PageShell title="Settings" subtitle="Tune Crays to your taste — keys, relays, notifications and more.">
@@ -120,20 +123,26 @@ function Settings() {
                 value={showKey ? "nsec1xkqf3w5l8m7…d2e9x4kpd0n8a7" : "nsec1•••••••••••••••••••••••••••••"}
                 trailing={
                   <button
-                    onClick={() => setShowKey((v) => !v)}
+                    onClick={() => { setShowKey(false); ui.openRevealKey(); }}
                     className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-200"
                   >
                     {showKey ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-                    {showKey ? "Hide" : "Reveal"}
+                    Reveal
                   </button>
                 }
               />
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
-              <button className="rounded-lg bg-zinc-900 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-black">
+              <button
+                onClick={() => toast.success("Backup downloaded")}
+                className="rounded-lg bg-zinc-900 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-black"
+              >
                 Backup keys
               </button>
-              <button className="rounded-lg bg-zinc-100 px-3.5 py-2 text-[12px] font-semibold text-zinc-700 hover:bg-zinc-200">
+              <button
+                onClick={() => toast("Connecting signer…")}
+                className="rounded-lg bg-zinc-100 px-3.5 py-2 text-[12px] font-semibold text-zinc-700 hover:bg-zinc-200"
+              >
                 Connect signer (NIP-07)
               </button>
             </div>
@@ -157,13 +166,19 @@ function Settings() {
                   </div>
                   <Toggle label="Read" on={r.reads} />
                   <Toggle label="Write" on={r.writes} />
-                  <button className="text-[11px] font-semibold text-zinc-400 hover:text-rose-500">
+                  <button
+                    onClick={() => toast.success(`Removed ${r.url}`)}
+                    className="text-[11px] font-semibold text-zinc-400 hover:text-rose-500"
+                  >
                     Remove
                   </button>
                 </li>
               ))}
             </ul>
-            <button className="mt-4 rounded-lg bg-zinc-100 px-3.5 py-2 text-[12px] font-semibold text-zinc-700 hover:bg-zinc-200">
+            <button
+              onClick={ui.openAddRelay}
+              className="mt-4 rounded-lg bg-zinc-100 px-3.5 py-2 text-[12px] font-semibold text-zinc-700 hover:bg-zinc-200"
+            >
               Add relay
             </button>
           </Panel>
@@ -185,7 +200,10 @@ function Settings() {
               <div>
                 <p className="text-[13px] font-semibold text-rose-700">You can sign-out to change account and return anytime using your Nostr identity keys.</p>
               </div>
-              <button className="rounded-lg bg-rose-600 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-rose-700">
+              <button
+                onClick={ui.openLogoutConfirm}
+                className="rounded-lg bg-rose-600 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-rose-700"
+              >
                 Disconnect
               </button>
             </div>
