@@ -90,6 +90,7 @@ const posts: Post[] = [
 ];
 
 function Profile() {
+  const ui = useUI();
   return (
     <PageShell title="Profile" subtitle="Public face of your sovereign identity.">
       {/* Banner + header */}
@@ -107,13 +108,22 @@ function Profile() {
               <AvatarTile seed="Alex Stellar" size={96} rounded="2xl" className="!rounded-xl" />
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 hover:bg-amber-100">
+              <button
+                onClick={() => ui.openZap({ recipient: "Alex Stellar" })}
+                className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 hover:bg-amber-100"
+              >
                 <Zap className="size-3.5" /> Zap
               </button>
-              <button className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-[12px] font-semibold text-zinc-700 shadow-card ring-1 ring-black/5 hover:bg-zinc-50">
+              <button
+                onClick={ui.openEditProfile}
+                className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-[12px] font-semibold text-zinc-700 shadow-card ring-1 ring-black/5 hover:bg-zinc-50"
+              >
                 <SettingsIcon className="size-3.5" /> Edit profile
               </button>
-              <button className="group inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black">
+              <button
+                onClick={ui.openUpgrade}
+                className="group inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black"
+              >
                 <Sparkles className="size-3.5 text-amber-300" />
                 Start 7-day free trial
               </button>
