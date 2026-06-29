@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageShell } from "@/components/page-shell";
 import { AvatarTile } from "@/components/avatar-tile";
+import { useUI } from "@/components/modals/ui-provider";
+import { toast } from "sonner";
 import {
   Crown,
   Zap,
@@ -44,6 +46,7 @@ const subs = [
 ];
 
 function Premium() {
+  const ui = useUI();
   return (
     <PageShell title="Premium" subtitle="One plan. Everything you need to run a paid audience on Nostr.">
       {/* Hero */}
@@ -67,10 +70,16 @@ function Premium() {
               Subscriptions, paywalls, a link-in-bio page and free trials — built on Lightning, powered by Nostr. 100% of every sat goes to you.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
-              <button className="rounded-full bg-white px-5 py-2.5 text-[13px] font-semibold text-zinc-900 hover:bg-zinc-100">
+              <button
+                onClick={ui.openUpgrade}
+                className="rounded-full bg-white px-5 py-2.5 text-[13px] font-semibold text-zinc-900 hover:bg-zinc-100"
+              >
                 Start 14-day free trial
               </button>
-              <button className="rounded-full bg-white/10 px-5 py-2.5 text-[13px] font-semibold text-white ring-1 ring-white/20 hover:bg-white/20">
+              <button
+                onClick={() => toast("Sample creator page coming soon")}
+                className="rounded-full bg-white/10 px-5 py-2.5 text-[13px] font-semibold text-white ring-1 ring-white/20 hover:bg-white/20"
+              >
                 See a creator page
               </button>
             </div>
@@ -103,7 +112,10 @@ function Premium() {
             </div>
             <p className="mt-2 text-[13px] text-zinc-300">Cancel anytime. 14-day free trial included.</p>
 
-            <button className="mt-6 w-full rounded-xl bg-white py-3 text-[13.5px] font-semibold text-zinc-900 transition-colors hover:bg-zinc-100">
+            <button
+              onClick={ui.openUpgrade}
+              className="mt-6 w-full rounded-xl bg-white py-3 text-[13.5px] font-semibold text-zinc-900 transition-colors hover:bg-zinc-100"
+            >
               Start free trial
             </button>
             <p className="mt-2 text-center text-[11px] text-zinc-400">

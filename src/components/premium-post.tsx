@@ -1,7 +1,9 @@
 import { Crown, Zap, Clock, Users } from "lucide-react";
 import { AvatarTile } from "./avatar-tile";
+import { useUI } from "./modals/ui-provider";
 
 export function PremiumPost() {
+  const ui = useUI();
   return (
     <article className="relative overflow-hidden rounded-2xl bg-white shadow-card ring-1 ring-black/5 transition-shadow hover:shadow-elevated">
       <div className="p-5 sm:p-6">
@@ -25,61 +27,38 @@ export function PremiumPost() {
           A look at how cross-border liquidity flows are quietly reshaping Bitcoin's next cycle —
           and why the next 18 months will define the decade.
         </p>
+      </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-zinc-500">
-          <span className="inline-flex items-center gap-1.5">
-            <Clock className="size-3.5" /> 12 min read
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <Users className="size-3.5" /> 1,284 subscribers
-          </span>
-        </div>
+      <div className="relative">
+        <div
+          className="h-44 w-full"
+          style={{
+            background:
+              "linear-gradient(135deg, #fef3c7 0%, #fde68a 30%, #fcd34d 60%, #f59e0b 100%)",
+          }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-white" />
+      </div>
 
-        {/* Locked preview */}
-        <div className="relative mt-5 overflow-hidden rounded-xl">
-          <div
-            className="aspect-[16/9] w-full blur-md"
-            style={{
-              background:
-                "radial-gradient(at 30% 20%, #93c5fd 0, transparent 50%), radial-gradient(at 70% 80%, #c4b5fd 0, transparent 50%), radial-gradient(at 50% 50%, #fda4af 0, transparent 60%), #f4f4f5",
-            }}
-          />
-          {/* Faint chart hint */}
-          <svg
-            viewBox="0 0 400 100"
-            className="absolute inset-0 h-full w-full text-zinc-900/15"
-            preserveAspectRatio="none"
-          >
-            <path
-              d="M0 70 L40 60 L80 75 L120 50 L160 55 L200 30 L240 40 L280 18 L320 25 L360 10 L400 14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            />
-          </svg>
-
-          <div className="absolute inset-0 flex items-center justify-center p-6">
-            <div className="w-full max-w-sm rounded-2xl bg-white/85 p-5 shadow-elevated ring-1 ring-black/5 backdrop-blur-xl">
-              <div className="mb-3 flex items-center gap-2">
-                <div className="grid size-9 place-items-center rounded-xl bg-brand/10 text-brand">
-                  <Zap className="size-4" strokeWidth={2.5} />
-                </div>
-                <div>
-                  <p className="text-[12.5px] font-semibold text-zinc-900">
-                    Unlock for 500 sats
-                  </p>
-                  <p className="text-[11px] text-zinc-500">≈ $0.32 · Lightning</p>
-                </div>
-              </div>
-              <button className="w-full rounded-xl bg-zinc-900 py-2.5 text-[13px] font-semibold text-white ring-1 ring-zinc-900 transition-all hover:bg-black active:scale-[0.99]">
-                Pay with Lightning
-              </button>
-              <p className="mt-2 text-center text-[10.5px] text-zinc-400">
-                One-time payment · or subscribe for $5/mo
-              </p>
-            </div>
+      <div className="space-y-4 px-5 pb-5 sm:px-6 sm:pb-6">
+        <div className="flex items-center justify-between text-[11.5px] text-zinc-500">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex items-center gap-1">
+              <Clock className="size-3.5" /> 8 min read
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <Users className="size-3.5" /> 12,402 unlocked
+            </span>
           </div>
+          <span className="font-mono text-zinc-400">500 sats</span>
         </div>
+        <button
+          onClick={() => ui.openUnlock({ title: "The Global Liquidity Inflection", sats: 500 })}
+          className="group flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 py-3 text-[13.5px] font-semibold text-white shadow-card transition-all hover:shadow-elevated active:scale-[0.99]"
+        >
+          <Zap className="size-4 transition-transform group-hover:scale-110" strokeWidth={2.4} />
+          Unlock for 500 sats
+        </button>
       </div>
     </article>
   );

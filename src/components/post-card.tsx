@@ -7,8 +7,23 @@ import {
   MoreHorizontal,
   BadgeCheck,
   Crown,
+  Copy,
+  Flag,
+  EyeOff,
+  Link as LinkIcon,
+  UserPlus,
 } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 import { AvatarTile } from "./avatar-tile";
+import { useUI } from "./modals/ui-provider";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export type Post = {
   id: string;
@@ -25,6 +40,9 @@ export type Post = {
 };
 
 export function PostCard({ post }: { post: Post }) {
+  const ui = useUI();
+  const [bookmarked, setBookmarked] = useState(false);
+  const [reposted, setReposted] = useState(false);
   return (
     <article className="space-y-4 rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 transition-shadow hover:shadow-elevated sm:p-6">
       <header className="flex items-start justify-between">
@@ -47,12 +65,34 @@ export function PostCard({ post }: { post: Post }) {
             </p>
           </div>
         </div>
-        <button
-          aria-label="More"
-          className="grid size-8 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
-        >
-          <MoreHorizontal className="size-4" />
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              aria-label="More"
+              className="grid size-8 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+            >
+              <MoreHorizontal className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuItem onClick={() => { toast.success(`Following ${post.author}`); }}>
+              <UserPlus className="size-4" /> Follow {post.handle}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => ui.openShare({ title: post.content.slice(0, 60) })}>
+              <LinkIcon className="size-4" /> Copy link
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => { navigator.clipboard?.writeText(post.content); toast.success("Post copied"); }}>
+              <Copy className="size-4" /> Copy text
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => toast("Hidden from feed")}>
+              <EyeOff className="size-4" /> Not interested
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-rose-600" onClick={() => toast("Reported")}>
+              <Flag className="size-4" /> Report
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </header>
 
       <p className="max-w-[58ch] text-pretty text-[15px] leading-relaxed text-zinc-800">
@@ -69,12 +109,40 @@ export function PostCard({ post }: { post: Post }) {
       )}
 
       <footer className="flex items-center gap-1 pt-1 text-zinc-500">
-        <Action icon={MessageCircle} label={String(post.replies)} hover="hover:text-brand" />
-        <Action icon={Repeat2} label={String(post.reposts)} hover="hover:text-emerald-600" />
-        <Action icon={Zap} label={post.zaps} hover="hover:text-amber-500" accent />
+        <Action
+          icon={MessageCircle}
+          label={String(post.replies)}
+          hover="hover:text-brand"
+          onClick={() => ui.openCompose({ mode: "reply", replyTo: post.handle })}
+        />
+        <Action
+          icon={Repeat2}
+          label={String(post.reposts + (reposted ? 1 : 0))}
+          hover="hover:text-emerald-600"
+          active={reposted}
+          activeClass="text-emerald-600"
+          onClick={() => { setReposted((v) => !v); toast.success(reposted ? "Repost removed" : "Reposted"); }}
+        />
+        <Action
+          icon={Zap}
+          label={post.zaps}
+          hover="hover:text-amber-500"
+          accent
+          onClick={() => ui.openZap({ recipient: post.author })}
+        />
         <div className="ml-auto flex">
-          <Action icon={Bookmark} hover="hover:text-zinc-900" />
-          <Action icon={Share2} hover="hover:text-zinc-900" />
+          <Action
+            icon={Bookmark}
+            hover="hover:text-zinc-900"
+            active={bookmarked}
+            activeClass="text-brand"
+            onClick={() => { setBookmarked((v) => !v); toast.success(bookmarked ? "Removed from bookmarks" : "Added to bookmarks"); }}
+          />
+          <Action
+            icon={Share2}
+            hover="hover:text-zinc-900"
+            onClick={() => ui.openShare({ title: post.content.slice(0, 60) })}
+          />
         </div>
       </footer>
     </article>
@@ -86,15 +154,24 @@ function Action({
   label,
   hover,
   accent,
+  onClick,
+  active,
+  activeClass,
 }: {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   label?: string;
   hover: string;
   accent?: boolean;
+  onClick?: () => void;
+  active?: boolean;
+  activeClass?: string;
 }) {
   return (
     <button
-      className={`group flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[12px] font-medium text-zinc-500 transition-colors ${hover}`}
+      onClick={onClick}
+      className={`group flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[12px] font-medium transition-colors ${
+        active ? activeClass : "text-zinc-500"
+      } ${hover}`}
     >
       <Icon
         className={`size-[15px] ${accent ? "transition-transform group-hover:scale-110" : ""}`}

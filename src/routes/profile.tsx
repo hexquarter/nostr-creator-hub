@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageShell } from "@/components/page-shell";
 import { AvatarTile } from "@/components/avatar-tile";
+import { useUI } from "@/components/modals/ui-provider";
+
 import { PostCard, type Post } from "@/components/post-card";
 import { PremiumPost } from "@/components/premium-post";
 import {
@@ -88,6 +90,7 @@ const posts: Post[] = [
 ];
 
 function Profile() {
+  const ui = useUI();
   return (
     <PageShell title="Profile" subtitle="Public face of your sovereign identity.">
       {/* Banner + header */}
@@ -105,13 +108,22 @@ function Profile() {
               <AvatarTile seed="Alex Stellar" size={96} rounded="2xl" className="!rounded-xl" />
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 hover:bg-amber-100">
+              <button
+                onClick={() => ui.openZap({ recipient: "Alex Stellar" })}
+                className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 hover:bg-amber-100"
+              >
                 <Zap className="size-3.5" /> Zap
               </button>
-              <button className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-[12px] font-semibold text-zinc-700 shadow-card ring-1 ring-black/5 hover:bg-zinc-50">
+              <button
+                onClick={ui.openEditProfile}
+                className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-[12px] font-semibold text-zinc-700 shadow-card ring-1 ring-black/5 hover:bg-zinc-50"
+              >
                 <SettingsIcon className="size-3.5" /> Edit profile
               </button>
-              <button className="group inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black">
+              <button
+                onClick={ui.openUpgrade}
+                className="group inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black"
+              >
                 <Sparkles className="size-3.5 text-amber-300" />
                 Start 7-day free trial
               </button>
@@ -175,10 +187,10 @@ function Profile() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button className="rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black">
+            <button onClick={ui.openUpgrade} className="rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black">
               Start free trial
             </button>
-            <button className="rounded-full bg-white/70 px-4 py-2 text-[12px] font-semibold text-zinc-700 ring-1 ring-black/5 hover:bg-white">
+            <button onClick={ui.openUpgrade} className="rounded-full bg-white/70 px-4 py-2 text-[12px] font-semibold text-zinc-700 ring-1 ring-black/5 hover:bg-white">
               Subscribe · $49/mo
             </button>
           </div>
@@ -199,7 +211,10 @@ function Profile() {
                 <span className="font-mono text-zinc-700">link.crays.net/alex</span>
               </p>
             </div>
-            <button className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-black">
+            <button
+              onClick={() => ui.openLinkBlock()}
+              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-black"
+            >
               <Plus className="size-3.5" /> Add link
             </button>
           </header>
@@ -257,13 +272,19 @@ function Profile() {
                     <p className="truncate text-[12.5px] font-semibold text-zinc-900">{b.title}</p>
                     <p className="truncate text-[11px] text-zinc-500">{b.sub}</p>
                   </div>
-                  <button className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-700">
+                  <button
+                    onClick={() => ui.openLinkBlock({ title: b.title, url: "#" })}
+                    className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-700"
+                  >
                     Edit
                   </button>
                 </li>
               ))}
             </ul>
-            <button className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 py-2.5 text-[12px] font-semibold text-zinc-500 hover:border-brand/40 hover:bg-brand/5 hover:text-brand">
+            <button
+              onClick={() => ui.openLinkBlock()}
+              className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 py-2.5 text-[12px] font-semibold text-zinc-500 hover:border-brand/40 hover:bg-brand/5 hover:text-brand"
+            >
               <Plus className="size-3.5" /> Add new block
             </button>
           </div>
