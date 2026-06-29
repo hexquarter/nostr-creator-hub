@@ -187,10 +187,10 @@ function Profile() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button className="rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black">
+            <button onClick={ui.openUpgrade} className="rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black">
               Start free trial
             </button>
-            <button className="rounded-full bg-white/70 px-4 py-2 text-[12px] font-semibold text-zinc-700 ring-1 ring-black/5 hover:bg-white">
+            <button onClick={ui.openUpgrade} className="rounded-full bg-white/70 px-4 py-2 text-[12px] font-semibold text-zinc-700 ring-1 ring-black/5 hover:bg-white">
               Subscribe · $49/mo
             </button>
           </div>
@@ -211,7 +211,10 @@ function Profile() {
                 <span className="font-mono text-zinc-700">link.crays.net/alex</span>
               </p>
             </div>
-            <button className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-black">
+            <button
+              onClick={() => ui.openLinkBlock()}
+              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-black"
+            >
               <Plus className="size-3.5" /> Add link
             </button>
           </header>
@@ -269,13 +272,19 @@ function Profile() {
                     <p className="truncate text-[12.5px] font-semibold text-zinc-900">{b.title}</p>
                     <p className="truncate text-[11px] text-zinc-500">{b.sub}</p>
                   </div>
-                  <button className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-700">
+                  <button
+                    onClick={() => ui.openLinkBlock({ title: b.title, url: "#" })}
+                    className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-700"
+                  >
                     Edit
                   </button>
                 </li>
               ))}
             </ul>
-            <button className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 py-2.5 text-[12px] font-semibold text-zinc-500 hover:border-brand/40 hover:bg-brand/5 hover:text-brand">
+            <button
+              onClick={() => ui.openLinkBlock()}
+              className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 py-2.5 text-[12px] font-semibold text-zinc-500 hover:border-brand/40 hover:bg-brand/5 hover:text-brand"
+            >
               <Plus className="size-3.5" /> Add new block
             </button>
           </div>
