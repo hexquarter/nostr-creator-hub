@@ -1,7 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import { PageShell } from "@/components/page-shell";
 import { AvatarTile } from "@/components/avatar-tile";
 import { Search, Zap, Paperclip, Smile, Send, ShieldCheck, Plus } from "lucide-react";
+import { useUI } from "@/components/modals/ui-provider";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/messages")({
   head: () => ({
@@ -30,6 +33,13 @@ const conversation = [
 ];
 
 function Messages() {
+  const ui = useUI();
+  const [draft, setDraft] = useState("");
+  const sendMsg = () => {
+    if (!draft.trim()) return;
+    toast.success("Message sent");
+    setDraft("");
+  };
   return (
     <PageShell title="Messages" subtitle="End-to-end encrypted over Nostr." rightSidebar={false}>
       <div className="grid h-[calc(100vh-200px)] min-h-[560px] grid-cols-1 overflow-hidden rounded-2xl bg-white shadow-card ring-1 ring-black/5 lg:grid-cols-[320px_minmax(0,1fr)]">
