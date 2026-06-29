@@ -50,10 +50,10 @@ function WalletPage() {
               ≈ <span className="text-zinc-200">$26.94 USD</span> · <span className="text-emerald-400">+4.2%</span> 24h
             </p>
             <div className="mt-6 flex flex-wrap gap-2.5">
-              <Action label="Receive" icon={ArrowDownLeft} primary />
-              <Action label="Send" icon={ArrowUpRight} />
-              <Action label="Zap" icon={Zap} />
-              <Action label="Top up" icon={CreditCard} />
+              <Action label="Receive" icon={ArrowDownLeft} primary onClick={ui.openReceive} />
+              <Action label="Send" icon={ArrowUpRight} onClick={ui.openSend} />
+              <Action label="Zap" icon={Zap} onClick={() => ui.openZap()} />
+              <Action label="Top up" icon={CreditCard} onClick={ui.openTopUp} />
             </div>
           </div>
           <div className="relative ml-auto grid place-items-center rounded-2xl bg-white/5 p-5 ring-1 ring-white/10 backdrop-blur-sm">
@@ -63,7 +63,10 @@ function WalletPage() {
             <p className="mt-3 max-w-[180px] truncate text-center font-mono text-[10.5px] text-zinc-400">
               you@crays.net
             </p>
-            <button className="mt-1 text-[10.5px] font-semibold text-amber-300 hover:underline">
+            <button
+              onClick={() => { navigator.clipboard?.writeText("you@crays.net"); toast.success("Lightning address copied"); }}
+              className="mt-1 text-[10.5px] font-semibold text-amber-300 hover:underline"
+            >
               Copy lightning address
             </button>
           </div>
@@ -94,7 +97,11 @@ function WalletPage() {
           {txs.map((t) => {
             const incoming = t.kind === "in";
             return (
-              <li key={t.id} className="flex items-center gap-4 px-5 py-3.5 transition-colors hover:bg-zinc-50/80">
+              <li
+                key={t.id}
+                onClick={() => ui.openTxDetail({ ...t, kind: t.kind as "in" | "out" })}
+                className="flex cursor-pointer items-center gap-4 px-5 py-3.5 transition-colors hover:bg-zinc-50/80"
+              >
                 <div className="relative">
                   <AvatarTile seed={t.who} size={38} />
                   <span
@@ -138,13 +145,16 @@ function Action({
   label,
   icon: Icon,
   primary,
+  onClick,
 }: {
   label: string;
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   primary?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <button
+      onClick={onClick}
       className={`inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[12.5px] font-semibold transition-colors ${
         primary
           ? "bg-amber-400 text-amber-950 hover:bg-amber-300"
