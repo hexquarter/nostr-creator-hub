@@ -62,7 +62,7 @@ import {
   Fingerprint,
   KeyRound,
   Radio,
-  Instagram,
+  Camera,
   ShieldCheck,
   ArrowRight,
   Loader2,
