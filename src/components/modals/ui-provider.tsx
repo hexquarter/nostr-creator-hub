@@ -881,7 +881,7 @@ function LogoutConfirm({ open, onClose, onConfirm }: { open: boolean; onClose: (
           <AlertDialogCancel onClick={onClose}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             className="bg-rose-600 hover:bg-rose-700"
-            onClick={() => { toast.success("Logged out"); onClose(); }}
+            onClick={() => { onConfirm(); onClose(); }}
           >
             Log out
           </AlertDialogAction>
