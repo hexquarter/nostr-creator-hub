@@ -867,7 +867,7 @@ function RevealKeyModal({ open, onClose }: { open: boolean; onClose: () => void 
 }
 
 // ---------- Logout confirm ----------
-function LogoutConfirm({ open, onClose }: { open: boolean; onClose: () => void }) {
+function LogoutConfirm({ open, onClose, onConfirm }: { open: boolean; onClose: () => void; onConfirm: () => void }) {
   return (
     <AlertDialog open={open} onOpenChange={(o) => !o && onClose()}>
       <AlertDialogContent>
