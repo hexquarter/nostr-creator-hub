@@ -8,6 +8,7 @@ export function Composer() {
   const ui = useUI();
   const [text, setText] = useState("");
   const handlePost = () => {
+    if (!ui.requireAuth("post to Nostr")) return;
     if (!text.trim()) {
       toast.error("Write something first");
       return;
@@ -15,6 +16,7 @@ export function Composer() {
     toast.success("Posted to Nostr");
     setText("");
   };
+
   return (
     <section className="rounded-2xl bg-white p-4 shadow-card ring-1 ring-black/5 transition-shadow focus-within:shadow-elevated">
       <div className="flex gap-4">
