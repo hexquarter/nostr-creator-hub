@@ -77,7 +77,17 @@ type ShareOptions = { url?: string; title?: string };
 type ComposeOptions = { mode?: "post" | "article" | "poll" | "reply"; replyTo?: string };
 type TxDetail = { id: string; who: string; note: string; amount: string; usd: string; time: string; kind: "in" | "out" };
 
+export type AuthMethod = "passkey" | "bunker" | "nostr-connect" | "nwc" | "keys";
+export type AuthUser = { name: string; handle: string; npub: string; method: AuthMethod };
+type AuthOptions = { intent?: string };
+
 type UICtx = {
+  user: AuthUser | null;
+  signOut: () => void;
+  requireAuth: (intent: string, cb?: () => void) => boolean;
+  openAuth: (o?: AuthOptions) => void;
+  openImportInstagram: () => void;
+
   openZap: (o?: ZapOptions) => void;
   openCompose: (o?: ComposeOptions) => void;
   openUnlock: (o?: UnlockOptions) => void;
@@ -97,6 +107,7 @@ type UICtx = {
   openImagePicker: () => void;
   openPollBuilder: () => void;
 };
+
 
 const UIContext = createContext<UICtx | null>(null);
 
