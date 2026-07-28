@@ -59,8 +59,16 @@ import {
   Wallet,
   User,
   Settings as Cog,
+  Fingerprint,
+  KeyRound,
+  Radio,
+  Instagram,
+  ShieldCheck,
+  ArrowRight,
+  Loader2,
 } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
+
 
 // ---------- Types ----------
 type ZapOptions = { recipient?: string; postTitle?: string };
