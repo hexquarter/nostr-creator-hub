@@ -118,7 +118,13 @@ export function useUI() {
 }
 
 // ---------- Provider ----------
+const AUTH_STORAGE_KEY = "crays.auth.user";
+
 export function UIProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [auth, setAuth] = useState<AuthOptions | null>(null);
+  const [importIG, setImportIG] = useState(false);
+
   const [zap, setZap] = useState<ZapOptions | null>(null);
   const [compose, setCompose] = useState<ComposeOptions | null>(null);
   const [unlock, setUnlock] = useState<UnlockOptions | null>(null);
@@ -138,29 +144,60 @@ export function UIProvider({ children }: { children: ReactNode }) {
   const [imagePicker, setImagePicker] = useState(false);
   const [pollBuilder, setPollBuilder] = useState(false);
 
-  const value = useMemo<UICtx>(
-    () => ({
-      openZap: (o) => setZap(o ?? {}),
-      openCompose: (o) => setCompose(o ?? { mode: "post" }),
-      openUnlock: (o) => setUnlock(o ?? {}),
+  // hydrate persisted mock session
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (raw) setUser(JSON.parse(raw));
+    } catch {}
+  }, []);
+
+  const signIn = useCallback((u: AuthUser) => {
+    setUser(u);
+    try { localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(u)); } catch {}
+  }, []);
+  const signOut = useCallback(() => {
+    setUser(null);
+    try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch {}
+    toast.success("Signed out");
+  }, []);
+
+  const value = useMemo<UICtx>(() => {
+    const gate = (intent: string, run: () => void) => {
+      if (user) { run(); return true; }
+      setAuth({ intent });
+      return false;
+    };
+    return {
+      user,
+      signOut,
+      requireAuth: (intent, cb) => gate(intent, () => cb?.()),
+      openAuth: (o) => setAuth(o ?? {}),
+      openImportInstagram: () => {
+        if (!user) { setAuth({ intent: "import your Instagram content" }); return; }
+        setImportIG(true);
+      },
+
+      openZap: (o) => gate("send a zap", () => setZap(o ?? {})),
+      openCompose: (o) => gate("post to Nostr", () => setCompose(o ?? { mode: "post" })),
+      openUnlock: (o) => gate("unlock premium content", () => setUnlock(o ?? {})),
       openShare: (o) => setShare(o ?? {}),
-      openUpgrade: () => setUpgrade(true),
-      openSend: () => setSend(true),
-      openReceive: () => setReceive(true),
-      openTopUp: () => setTopup(true),
+      openUpgrade: () => gate("become a Creator", () => setUpgrade(true)),
+      openSend: () => gate("send sats", () => setSend(true)),
+      openReceive: () => gate("receive sats", () => setReceive(true)),
+      openTopUp: () => gate("top up your wallet", () => setTopup(true)),
       openTxDetail: (t) => setTx(t),
-      openEditProfile: () => setEditProfile(true),
-      openLinkBlock: (e) => setLinkBlock(e ?? null),
-      openNewDM: () => setNewDM(true),
-      openAddRelay: () => setAddRelay(true),
-      openRevealKey: () => setRevealKey(true),
+      openEditProfile: () => gate("edit your profile", () => setEditProfile(true)),
+      openLinkBlock: (e) => gate("edit your link-in-bio", () => setLinkBlock(e ?? null)),
+      openNewDM: () => gate("start a chat", () => setNewDM(true)),
+      openAddRelay: () => gate("add a relay", () => setAddRelay(true)),
+      openRevealKey: () => gate("reveal your key", () => setRevealKey(true)),
       openLogoutConfirm: () => setLogout(true),
       openCommandPalette: () => setCmd(true),
-      openImagePicker: () => setImagePicker(true),
-      openPollBuilder: () => setPollBuilder(true),
-    }),
-    [],
-  );
+      openImagePicker: () => gate("attach media", () => setImagePicker(true)),
+      openPollBuilder: () => gate("create a poll", () => setPollBuilder(true)),
+    };
+  }, [user, signOut]);
 
   // Cmd+K
   useEffect(() => {
@@ -173,6 +210,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
 
   return (
     <UIContext.Provider value={value}>
