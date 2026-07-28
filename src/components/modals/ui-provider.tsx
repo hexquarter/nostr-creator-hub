@@ -988,5 +988,382 @@ function FauxQR() {
   );
 }
 
+// ---------- Auth Modal ----------
+type AuthTab = "passkey" | "nostr" | "keys";
+type NostrSub = "bunker" | "nostr-connect" | "nwc";
+
+function AuthModal({
+  open,
+  options,
+  onClose,
+  onSignIn,
+}: {
+  open: boolean;
+  options: AuthOptions;
+  onClose: () => void;
+  onSignIn: (u: AuthUser) => void;
+}) {
+  const [tab, setTab] = useState<AuthTab>("passkey");
+  const [mode, setMode] = useState<"signin" | "create">("signin");
+  const [busy, setBusy] = useState<null | string>(null);
+  const [nostrSub, setNostrSub] = useState<NostrSub>("bunker");
+  const [bunker, setBunker] = useState("");
+  const [nsec, setNsec] = useState("");
+  const [npub, setNpub] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setTab("passkey");
+      setMode("signin");
+      setBusy(null);
+      setNostrSub("bunker");
+      setBunker("");
+      setNsec("");
+      setNpub("");
+    }
+  }, [open]);
+
+  const finish = (method: AuthMethod, name = "You Stellar", handle = "@you") => {
+    setBusy(null);
+    onSignIn({
+      name,
+      handle,
+      method,
+      npub: "npub1q9rk5l9smc3w4hk7xkfny0pl" + Math.random().toString(36).slice(2, 6) + "u7e2x",
+    });
+    toast.success(`Signed in with ${labelFor(method)}`);
+  };
+
+  const runWithSpinner = (label: string, method: AuthMethod) => {
+    setBusy(label);
+    setTimeout(() => finish(method), 900);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ShieldCheck className="size-5 text-brand" />
+            {mode === "create" ? "Create your account" : "Connect to Crays"}
+          </DialogTitle>
+          <DialogDescription>
+            {options.intent
+              ? `Sign in to ${options.intent}. Your identity is yours — you can leave anytime.`
+              : "Passkey-first. Nostr-native. Your keys, your account, your audience."}
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Sign in / Create toggle */}
+        <div className="flex gap-1 rounded-full bg-zinc-100 p-1 text-[12px] font-medium w-fit self-center">
+          {(["signin", "create"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={`rounded-full px-4 py-1.5 transition-colors ${mode === m ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500"}`}
+            >
+              {m === "signin" ? "Sign in" : "Create account"}
+            </button>
+          ))}
+        </div>
+
+        {/* Method tabs */}
+        <div className="mt-1 grid grid-cols-3 gap-2">
+          <TabCard active={tab === "passkey"} onClick={() => setTab("passkey")} icon={Fingerprint} title="Passkey" badge="Recommended" />
+          <TabCard active={tab === "nostr"} onClick={() => setTab("nostr")} icon={Radio} title="Nostr signer" />
+          <TabCard active={tab === "keys"} onClick={() => setTab("keys")} icon={KeyRound} title="npub / nsec" />
+        </div>
+
+        <div className="mt-1 min-h-[180px]">
+          {tab === "passkey" && (
+            <div className="space-y-3">
+              <p className="text-[12.5px] text-zinc-600">
+                {mode === "create"
+                  ? "Create an account secured by your device — Face ID, Touch ID or Windows Hello. No password, no seed to lose. Your Nostr key is generated on-device and wrapped by the passkey."
+                  : "Use the passkey stored on this device or a hardware key to sign in instantly."}
+              </p>
+              <ul className="space-y-1.5 text-[12px] text-zinc-500">
+                <li className="flex gap-2"><Check className="size-4 text-emerald-500" /> Phishing-resistant</li>
+                <li className="flex gap-2"><Check className="size-4 text-emerald-500" /> Syncs across your Apple / Google devices</li>
+                <li className="flex gap-2"><Check className="size-4 text-emerald-500" /> Export your nsec anytime</li>
+              </ul>
+              <PrimaryBtn
+                className="w-full"
+                disabled={!!busy}
+                onClick={() => runWithSpinner("Waiting for passkey…", "passkey")}
+              >
+                {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : (<><Fingerprint className="size-4" /> {mode === "create" ? "Create with passkey" : "Continue with passkey"}</>)}
+              </PrimaryBtn>
+            </div>
+          )}
+
+          {tab === "nostr" && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-1.5">
+                {([
+                  { id: "bunker", label: "Bunker" },
+                  { id: "nostr-connect", label: "Nostr Connect" },
+                  { id: "nwc", label: "NWC" },
+                ] as const).map((o) => (
+                  <button
+                    key={o.id}
+                    onClick={() => setNostrSub(o.id)}
+                    className={`rounded-lg px-2 py-2 text-[11.5px] font-semibold ring-1 transition-colors ${
+                      nostrSub === o.id ? "bg-zinc-900 text-white ring-zinc-900" : "bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50"
+                    }`}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              {nostrSub === "bunker" && (
+                <>
+                  <p className="text-[12.5px] text-zinc-600">Paste a <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">bunker://</code> URI from your remote signer.</p>
+                  <Field label="Bunker URI">
+                    <input value={bunker} onChange={(e) => setBunker(e.target.value)} placeholder="bunker://npub…?relay=wss://…" className={`${inputCls} font-mono text-[12px]`} />
+                  </Field>
+                  <PrimaryBtn className="w-full" disabled={!bunker || !!busy} onClick={() => runWithSpinner("Connecting to signer…", "bunker")}>
+                    {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : "Connect signer"}
+                  </PrimaryBtn>
+                </>
+              )}
+              {nostrSub === "nostr-connect" && (
+                <>
+                  <p className="text-[12.5px] text-zinc-600">Scan this QR from Amber, Nostrify, Alby or any NIP-46 signer.</p>
+                  <div className="mx-auto grid size-40 place-items-center rounded-xl bg-white p-3 ring-1 ring-zinc-200"><FauxQR /></div>
+                  <PrimaryBtn className="w-full" disabled={!!busy} onClick={() => runWithSpinner("Waiting for signer approval…", "nostr-connect")}>
+                    {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : "I've scanned it"}
+                  </PrimaryBtn>
+                </>
+              )}
+              {nostrSub === "nwc" && (
+                <>
+                  <p className="text-[12.5px] text-zinc-600">Connect a Nostr Wallet Connect string to sign & zap in one place.</p>
+                  <Field label="NWC connection">
+                    <input value={bunker} onChange={(e) => setBunker(e.target.value)} placeholder="nostr+walletconnect://…" className={`${inputCls} font-mono text-[12px]`} />
+                  </Field>
+                  <PrimaryBtn className="w-full" disabled={!bunker || !!busy} onClick={() => runWithSpinner("Pairing wallet…", "nwc")}>
+                    {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : "Pair wallet"}
+                  </PrimaryBtn>
+                </>
+              )}
+            </div>
+          )}
+
+          {tab === "keys" && (
+            <div className="space-y-3">
+              {mode === "create" ? (
+                <>
+                  <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-amber-100">
+                    <p className="text-[12px] font-semibold text-amber-800">A fresh Nostr key will be generated for you.</p>
+                    <p className="mt-0.5 text-[11.5px] text-amber-700">You'll be prompted to back up your nsec after signing in. Lose it and you lose the account.</p>
+                  </div>
+                  <PrimaryBtn className="w-full" disabled={!!busy} onClick={() => runWithSpinner("Generating keys…", "keys")}>
+                    {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : "Generate my keys"}
+                  </PrimaryBtn>
+                </>
+              ) : (
+                <>
+                  <Field label="Public key (npub) — optional">
+                    <input value={npub} onChange={(e) => setNpub(e.target.value)} placeholder="npub1…" className={`${inputCls} font-mono text-[12px]`} />
+                  </Field>
+                  <Field label="Private key (nsec)" hint="Stored locally in your browser only. Prefer passkey or a signer.">
+                    <input value={nsec} onChange={(e) => setNsec(e.target.value)} type="password" placeholder="nsec1…" className={`${inputCls} font-mono text-[12px]`} />
+                  </Field>
+                  <PrimaryBtn className="w-full" disabled={!nsec || !!busy} onClick={() => runWithSpinner("Verifying key…", "keys")}>
+                    {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : "Sign in with nsec"}
+                  </PrimaryBtn>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-2 flex items-center gap-2 rounded-lg bg-zinc-50 p-2.5 text-[11.5px] text-zinc-500 ring-1 ring-zinc-100">
+          <ShieldCheck className="size-3.5 text-zinc-400" />
+          Crays never sees your private key. Signing happens on your device or your signer.
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function labelFor(m: AuthMethod) {
+  return {
+    passkey: "Passkey",
+    bunker: "Bunker",
+    "nostr-connect": "Nostr Connect",
+    nwc: "Nostr Wallet Connect",
+    keys: "nsec",
+  }[m];
+}
+
+function TabCard({
+  active,
+  onClick,
+  icon: Icon,
+  title,
+  badge,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  badge?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative rounded-xl px-3 py-3 text-left transition-colors ${
+        active ? "bg-zinc-900 text-white ring-1 ring-zinc-900" : "bg-white text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-50"
+      }`}
+    >
+      <Icon className={`size-4 ${active ? "text-white" : "text-zinc-500"}`} />
+      <p className="mt-1.5 text-[12.5px] font-semibold">{title}</p>
+      {badge && (
+        <span className={`absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${active ? "bg-white/15 text-white" : "bg-brand/10 text-brand"}`}>
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ---------- Import from Instagram (onboarding + sidebar) ----------
+function ImportInstagramModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [step, setStep] = useState<"connect" | "select" | "done">("connect");
+  const [handle, setHandle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [posts, setPosts] = useState<Array<{ id: number; caption: string; on: boolean }>>([]);
+
+  useEffect(() => {
+    if (open) { setStep("connect"); setHandle(""); setBusy(false); setPosts([]); }
+  }, [open]);
+
+  const connect = () => {
+    setBusy(true);
+    setTimeout(() => {
+      setPosts(
+        Array.from({ length: 8 }, (_, i) => ({
+          id: i,
+          caption: [
+            "Sunset over Lisbon",
+            "Studio setup 2026",
+            "New essay: The open creator economy",
+            "Behind the scenes",
+            "Chart of the day",
+            "Podcast with Elena Vega",
+            "Trip to Prague",
+            "Coffee & Bitcoin",
+          ][i],
+          on: true,
+        })),
+      );
+      setBusy(false);
+      setStep("select");
+    }, 900);
+  };
+
+  const importSel = () => {
+    setBusy(true);
+    setTimeout(() => {
+      setBusy(false);
+      setStep("done");
+      toast.success(`${posts.filter((p) => p.on).length} posts imported to Nostr`);
+    }, 900);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[560px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Camera className="size-5 text-fuchsia-500" />
+            Import from Instagram
+          </DialogTitle>
+          <DialogDescription>
+            Bring your existing audience & content into Nostr. This is a preview — no data is fetched yet.
+          </DialogDescription>
+        </DialogHeader>
+
+        {step === "connect" && (
+          <div className="space-y-3">
+            <Field label="Instagram handle" hint="We'll fetch your public posts. Private accounts can upload an export.">
+              <input value={handle} onChange={(e) => setHandle(e.target.value.replace(/^@/, ""))} placeholder="yourhandle" className={inputCls} />
+            </Field>
+            <div className="flex items-center justify-between rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-100">
+              <div>
+                <p className="text-[12.5px] font-semibold text-zinc-800">Or upload IG data export</p>
+                <p className="text-[11px] text-zinc-500">Settings → Your activity → Download your information</p>
+              </div>
+              <GhostBtn onClick={() => toast("Upload coming soon")}>Upload .zip</GhostBtn>
+            </div>
+            <div className="flex gap-2">
+              <GhostBtn className="flex-1" onClick={onClose}>Skip for now</GhostBtn>
+              <PrimaryBtn className="flex-1" disabled={!handle || busy} onClick={connect}>
+                {busy ? <><Loader2 className="size-4 animate-spin" /> Connecting…</> : (<>Connect <ArrowRight className="size-4" /></>)}
+              </PrimaryBtn>
+            </div>
+          </div>
+        )}
+
+        {step === "select" && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-[12.5px] font-semibold text-zinc-800">Select posts to import</p>
+              <div className="flex gap-2 text-[11.5px] font-semibold text-brand">
+                <button onClick={() => setPosts((p) => p.map((x) => ({ ...x, on: true })))}>All</button>
+                <span className="text-zinc-300">·</span>
+                <button onClick={() => setPosts((p) => p.map((x) => ({ ...x, on: false })))}>None</button>
+              </div>
+            </div>
+            <ul className="max-h-[280px] space-y-1.5 overflow-auto pr-1">
+              {posts.map((p) => (
+                <li key={p.id}>
+                  <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-white p-2.5 ring-1 ring-zinc-100 hover:bg-zinc-50">
+                    <input
+                      type="checkbox"
+                      checked={p.on}
+                      onChange={(e) => setPosts((all) => all.map((x) => x.id === p.id ? { ...x, on: e.target.checked } : x))}
+                      className="size-4 accent-brand"
+                    />
+                    <div className="size-10 shrink-0 rounded-lg bg-gradient-to-br from-fuchsia-400 via-orange-300 to-amber-300" />
+                    <p className="flex-1 truncate text-[12.5px] text-zinc-800">{p.caption}</p>
+                    <span className="text-[10.5px] text-zinc-400">IG</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <div className="flex items-center gap-2 rounded-lg bg-blue-50 p-2.5 text-[11.5px] text-blue-800 ring-1 ring-blue-100">
+              <ShieldCheck className="size-3.5" />
+              Original captions & media are re-published as Nostr events signed by your key.
+            </div>
+            <div className="flex gap-2">
+              <GhostBtn className="flex-1" onClick={() => setStep("connect")}>Back</GhostBtn>
+              <PrimaryBtn className="flex-1" disabled={busy || !posts.some((p) => p.on)} onClick={importSel}>
+                {busy ? <><Loader2 className="size-4 animate-spin" /> Importing…</> : `Import ${posts.filter((p) => p.on).length}`}
+              </PrimaryBtn>
+            </div>
+          </div>
+        )}
+
+        {step === "done" && (
+          <div className="space-y-3 text-center">
+            <div className="mx-auto grid size-14 place-items-center rounded-2xl bg-emerald-100 text-emerald-600">
+              <Check className="size-7" />
+            </div>
+            <p className="text-[14px] font-semibold text-zinc-900">All set</p>
+            <p className="text-[12.5px] text-zinc-500">
+              Your posts have been published to your relays. Followers can now discover them on Nostr.
+            </p>
+            <PrimaryBtn className="w-full" onClick={onClose}>Done</PrimaryBtn>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // suppress unused
 void Sparkles; void FileText; void Mic; void Plus; void Share2; void X;
+
