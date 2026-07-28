@@ -234,10 +234,18 @@ export function UIProvider({ children }: { children: ReactNode }) {
       <NewDMModal open={newDM} onClose={() => setNewDM(false)} />
       <AddRelayModal open={addRelay} onClose={() => setAddRelay(false)} />
       <RevealKeyModal open={revealKey} onClose={() => setRevealKey(false)} />
-      <LogoutConfirm open={logout} onClose={() => setLogout(false)} />
+      <LogoutConfirm open={logout} onClose={() => setLogout(false)} onConfirm={signOut} />
       <CommandPalette open={cmd} onOpenChange={setCmd} />
       <ImagePickerModal open={imagePicker} onClose={() => setImagePicker(false)} />
       <PollBuilderModal open={pollBuilder} onClose={() => setPollBuilder(false)} />
+      <AuthModal
+        open={!!auth}
+        options={auth ?? {}}
+        onClose={() => setAuth(null)}
+        onSignIn={(u) => { signIn(u); setAuth(null); setImportIG(true); }}
+      />
+      <ImportInstagramModal open={importIG} onClose={() => setImportIG(false)} />
+
     </UIContext.Provider>
   );
 }
