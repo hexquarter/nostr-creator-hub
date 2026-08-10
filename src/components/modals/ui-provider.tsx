@@ -65,6 +65,9 @@ import {
   Camera,
   ShieldCheck,
   ArrowRight,
+  AlertTriangle,
+  Lock,
+
   Loader2,
 } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
