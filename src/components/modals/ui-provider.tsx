@@ -545,7 +545,14 @@ function ComposeModal({ open, onClose, options }: { open: boolean; onClose: () =
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
           <PrimaryBtn
             onClick={() => {
-              toast.success(tab === "article" ? "Article published" : tab === "poll" ? "Poll posted" : "Posted to Nostr");
+              toast.success(tab === "article" ? "Article published" : tab === "poll" ? "Poll posted" : "Posted to Nostr", {
+                description: [
+                  premium ? `Members only · ${price.toLocaleString()} sats` : null,
+                  sensitive ? `Marked sensitive · ${reason}${warning ? ` — ${warning}` : ""}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || undefined,
+              });
               onClose();
             }}
           >
