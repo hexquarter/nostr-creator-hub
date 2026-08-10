@@ -65,6 +65,9 @@ import {
   Camera,
   ShieldCheck,
   ArrowRight,
+  AlertTriangle,
+  Lock,
+
   Loader2,
 } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -356,17 +359,69 @@ function ZapModal({ open, onClose, options }: { open: boolean; onClose: () => vo
 }
 
 // ---------- Compose ----------
+const SENSITIVE_REASONS = ["Nudity", "Graphic", "Violence", "Language", "Other"] as const;
+type SensitiveReason = (typeof SENSITIVE_REASONS)[number];
+
+function ToggleRow({
+  icon,
+  title,
+  hint,
+  on,
+  onToggle,
+  tone,
+}: {
+  icon: ReactNode;
+  title: string;
+  hint: string;
+  on: boolean;
+  onToggle: () => void;
+  tone: "amber" | "rose";
+}) {
+  const bg = tone === "amber" ? "bg-amber-50 ring-amber-100" : "bg-rose-50 ring-rose-100";
+  const knob = tone === "amber" ? "bg-amber-500" : "bg-rose-500";
+  return (
+    <div className={`flex items-center justify-between gap-3 rounded-xl px-3.5 py-3 ring-1 ${bg}`}>
+      <div className="flex min-w-0 items-start gap-2.5">
+        <span className="mt-0.5 shrink-0">{icon}</span>
+        <div className="min-w-0">
+          <p className="text-[12.5px] font-semibold text-zinc-900">{title}</p>
+          <p className="text-[11.5px] text-zinc-500">{hint}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={title}
+        onClick={onToggle}
+        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${on ? knob : "bg-zinc-300"}`}
+      >
+        <span className={`absolute left-0.5 top-0.5 size-4 rounded-full bg-white transition-transform ${on ? "translate-x-4" : ""}`} />
+      </button>
+    </div>
+  );
+}
+
 function ComposeModal({ open, onClose, options }: { open: boolean; onClose: () => void; options: ComposeOptions }) {
   const [tab, setTab] = useState<"post" | "article" | "poll">(options.mode === "article" ? "article" : options.mode === "poll" ? "poll" : "post");
   const [text, setText] = useState("");
   const [premium, setPremium] = useState(false);
+  const [price, setPrice] = useState(500);
+  const [sensitive, setSensitive] = useState(false);
+  const [reason, setReason] = useState<SensitiveReason>("Nudity");
+  const [warning, setWarning] = useState("");
   useEffect(() => {
     if (open) {
       setTab(options.mode === "article" ? "article" : options.mode === "poll" ? "poll" : "post");
       setText("");
       setPremium(false);
+      setPrice(500);
+      setSensitive(false);
+      setReason("Nudity");
+      setWarning("");
     }
   }, [open, options.mode]);
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[600px]">
@@ -414,24 +469,90 @@ function ComposeModal({ open, onClose, options }: { open: boolean; onClose: () =
               <button className="text-[12px] font-semibold text-brand">+ Add option</button>
             </div>
           )}
-          <div className="flex items-center justify-between rounded-xl bg-amber-50 px-3.5 py-2.5 ring-1 ring-amber-100">
-            <div className="flex items-center gap-2">
-              <Crown className="size-4 text-amber-600" />
-              <span className="text-[12.5px] font-semibold text-amber-900">Paywall (premium)</span>
-            </div>
-            <button
-              onClick={() => setPremium((v) => !v)}
-              className={`relative h-5 w-9 rounded-full transition-colors ${premium ? "bg-amber-500" : "bg-zinc-300"}`}
-            >
-              <span className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-white transition-transform ${premium ? "translate-x-4" : ""}`} />
-            </button>
+          <div className="space-y-2">
+            <ToggleRow
+              icon={<Crown className="size-4 text-amber-600" />}
+              title="Members only"
+              hint={premium ? "Only paying members can open this post." : "Free for everyone."}
+              tone="amber"
+              on={premium}
+              onToggle={() => setPremium((v) => !v)}
+            />
+            {premium && (
+              <div className="grid grid-cols-3 gap-2 rounded-xl bg-amber-50/60 p-2 ring-1 ring-amber-100">
+                {[500, 2000, 5000].map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setPrice(p)}
+                    className={`rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors ${
+                      price === p ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200" : "text-amber-800/70"
+                    }`}
+                  >
+                    {p.toLocaleString()} sats
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <ToggleRow
+              icon={<AlertTriangle className="size-4 text-rose-600" />}
+              title="Sensitive content"
+              hint={
+                sensitive
+                  ? "Media will be blurred until viewers tap to reveal."
+                  : "Turn on if this post contains adult, graphic or shocking media."
+              }
+              tone="rose"
+              on={sensitive}
+              onToggle={() => setSensitive((v) => !v)}
+            />
+            {sensitive && (
+              <div className="space-y-2 rounded-xl bg-rose-50/60 p-3 ring-1 ring-rose-100">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-rose-700">
+                  Why is it sensitive?
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {SENSITIVE_REASONS.map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => setReason(r)}
+                      className={`rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                        reason === r
+                          ? "bg-rose-600 text-white"
+                          : "bg-white text-rose-800 ring-1 ring-rose-200 hover:bg-rose-100"
+                      }`}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  value={warning}
+                  onChange={(e) => setWarning(e.target.value)}
+                  className={inputCls}
+                  placeholder="Optional note shown before reveal…"
+                />
+                <div className="flex items-start gap-2 rounded-lg bg-white/70 p-2.5 text-[11.5px] text-zinc-600 ring-1 ring-rose-100">
+                  <Lock className="mt-0.5 size-3.5 shrink-0 text-rose-500" />
+                  Hidden from Discover and from anyone who turned sensitive media off.
+                </div>
+              </div>
+            )}
           </div>
+
         </div>
         <DialogFooter>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
           <PrimaryBtn
             onClick={() => {
-              toast.success(tab === "article" ? "Article published" : tab === "poll" ? "Poll posted" : "Posted to Nostr");
+              toast.success(tab === "article" ? "Article published" : tab === "poll" ? "Poll posted" : "Posted to Nostr", {
+                description: [
+                  premium ? `Members only · ${price.toLocaleString()} sats` : null,
+                  sensitive ? `Marked sensitive · ${reason}${warning ? ` — ${warning}` : ""}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || undefined,
+              });
               onClose();
             }}
           >
