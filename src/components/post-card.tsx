@@ -34,6 +34,7 @@ export type Post = {
   time: string;
   content: string;
   image?: { gradient: string; aspect?: string };
+  sensitive?: { reason: string; note?: string };
   replies: number;
   zaps: string;
   reposts: number;
@@ -43,6 +44,8 @@ export function PostCard({ post }: { post: Post }) {
   const ui = useUI();
   const [bookmarked, setBookmarked] = useState(false);
   const [reposted, setReposted] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+
   return (
     <article className="space-y-4 rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 transition-shadow hover:shadow-elevated sm:p-6">
       <header className="flex items-start justify-between">
