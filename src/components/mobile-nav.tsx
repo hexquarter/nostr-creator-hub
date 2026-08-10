@@ -46,7 +46,7 @@ export function MobileNav() {
               }`}
             >
               {ui.user ? (
-                <AvatarTile seed={ui.user.name ?? "You Stellar"} size={28} />
+                <AvatarTile seed={ui.user.name} size={28} />
               ) : (
                 <span className="grid size-7 place-items-center rounded-full bg-zinc-100 text-zinc-500">
                   <User className="size-4" />
