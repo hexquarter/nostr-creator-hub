@@ -86,7 +86,7 @@ function Home() {
       <div className="mx-auto grid w-full max-w-[1400px] gap-6 px-4 sm:px-6 lg:grid-cols-[224px_minmax(0,1fr)] lg:gap-8 xl:grid-cols-[224px_minmax(0,1fr)_320px]">
         <LeftSidebar />
 
-        <main className="space-y-6 pb-28 lg:py-6 lg:pb-6">
+        <main className="min-w-0 space-y-6 pb-28 lg:py-6 lg:pb-6">
           <MobileTopBar />
 
           <header className="hidden items-end justify-between lg:flex">
