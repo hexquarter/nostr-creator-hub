@@ -359,17 +359,69 @@ function ZapModal({ open, onClose, options }: { open: boolean; onClose: () => vo
 }
 
 // ---------- Compose ----------
+const SENSITIVE_REASONS = ["Nudity", "Graphic", "Violence", "Language", "Other"] as const;
+type SensitiveReason = (typeof SENSITIVE_REASONS)[number];
+
+function ToggleRow({
+  icon,
+  title,
+  hint,
+  on,
+  onToggle,
+  tone,
+}: {
+  icon: ReactNode;
+  title: string;
+  hint: string;
+  on: boolean;
+  onToggle: () => void;
+  tone: "amber" | "rose";
+}) {
+  const bg = tone === "amber" ? "bg-amber-50 ring-amber-100" : "bg-rose-50 ring-rose-100";
+  const knob = tone === "amber" ? "bg-amber-500" : "bg-rose-500";
+  return (
+    <div className={`flex items-center justify-between gap-3 rounded-xl px-3.5 py-3 ring-1 ${bg}`}>
+      <div className="flex min-w-0 items-start gap-2.5">
+        <span className="mt-0.5 shrink-0">{icon}</span>
+        <div className="min-w-0">
+          <p className="text-[12.5px] font-semibold text-zinc-900">{title}</p>
+          <p className="text-[11.5px] text-zinc-500">{hint}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={title}
+        onClick={onToggle}
+        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${on ? knob : "bg-zinc-300"}`}
+      >
+        <span className={`absolute left-0.5 top-0.5 size-4 rounded-full bg-white transition-transform ${on ? "translate-x-4" : ""}`} />
+      </button>
+    </div>
+  );
+}
+
 function ComposeModal({ open, onClose, options }: { open: boolean; onClose: () => void; options: ComposeOptions }) {
   const [tab, setTab] = useState<"post" | "article" | "poll">(options.mode === "article" ? "article" : options.mode === "poll" ? "poll" : "post");
   const [text, setText] = useState("");
   const [premium, setPremium] = useState(false);
+  const [price, setPrice] = useState(500);
+  const [sensitive, setSensitive] = useState(false);
+  const [reason, setReason] = useState<SensitiveReason>("Nudity");
+  const [warning, setWarning] = useState("");
   useEffect(() => {
     if (open) {
       setTab(options.mode === "article" ? "article" : options.mode === "poll" ? "poll" : "post");
       setText("");
       setPremium(false);
+      setPrice(500);
+      setSensitive(false);
+      setReason("Nudity");
+      setWarning("");
     }
   }, [open, options.mode]);
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[600px]">
