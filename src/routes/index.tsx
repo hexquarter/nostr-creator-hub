@@ -58,6 +58,24 @@ const posts: Post[] = [
     zaps: "412k",
     reposts: 91,
   },
+  {
+    id: "3",
+    author: "Nova Sen",
+    handle: "@nova",
+    premium: true,
+    time: "1h",
+    content:
+      "New photo set is up for members. Marked sensitive so it stays blurred in the feed until you choose to see it.",
+    image: {
+      gradient:
+        "linear-gradient(135deg, #fda4af 0%, #f43f5e 45%, #7c3aed 100%)",
+      aspect: "aspect-[4/5]",
+    },
+    sensitive: { reason: "Nudity", note: "Members-only photo set — tap to reveal." },
+    replies: 21,
+    zaps: "96k",
+    reposts: 8,
+  },
 ];
 
 function Home() {
@@ -66,8 +84,10 @@ function Home() {
       <div className="mx-auto grid w-full max-w-[1400px] gap-6 px-4 sm:px-6 lg:grid-cols-[224px_minmax(0,1fr)] lg:gap-8 xl:grid-cols-[224px_minmax(0,1fr)_320px]">
         <LeftSidebar />
 
-        <main className="space-y-6 py-6 pb-24 lg:pb-6">
-          <header className="flex items-end justify-between">
+        <main className="space-y-6 pb-28 lg:py-6 lg:pb-6">
+          <MobileTopBar />
+
+          <header className="hidden items-end justify-between lg:flex">
             <div>
               <h1 className="text-[26px] font-semibold leading-none tracking-tight text-zinc-900">
                 Home
@@ -89,13 +109,17 @@ function Home() {
             </div>
           </header>
 
-          <Composer />
           <FeaturedCreators />
+
+          <div className="hidden lg:block">
+            <Composer />
+          </div>
 
           <div className="space-y-5">
             <PostCard post={posts[0]} />
             <PremiumPost />
             <PostCard post={posts[1]} />
+            <PostCard post={posts[2]} />
           </div>
         </main>
 
@@ -105,3 +129,4 @@ function Home() {
     </div>
   );
 }
+
