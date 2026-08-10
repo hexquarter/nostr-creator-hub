@@ -104,12 +104,46 @@ export function PostCard({ post }: { post: Post }) {
 
       {post.image && (
         <div
-          className={`w-full overflow-hidden rounded-xl ring-1 ring-black/5 ${
+          className={`relative w-full overflow-hidden rounded-xl ring-1 ring-black/5 ${
             post.image.aspect ?? "aspect-[16/10]"
           }`}
-          style={{ background: post.image.gradient }}
-        />
+        >
+          <div
+            className={`absolute inset-0 transition-all duration-300 ${
+              post.sensitive && !revealed ? "scale-110 blur-2xl" : ""
+            }`}
+            style={{ background: post.image.gradient }}
+          />
+          {post.sensitive && !revealed && (
+            <div className="absolute inset-0 grid place-items-center bg-zinc-900/25 p-6 text-center">
+              <div className="space-y-2">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1 text-[11px] font-semibold text-zinc-800">
+                  <EyeOff className="size-3.5" /> Sensitive · {post.sensitive.reason}
+                </span>
+                <p className="text-[12.5px] font-medium text-white drop-shadow">
+                  {post.sensitive.note ?? "This media may be sensitive."}
+                </p>
+                <button
+                  onClick={() => setRevealed(true)}
+                  className="rounded-full bg-white px-4 py-2 text-[12.5px] font-semibold text-zinc-900 shadow-card transition-transform active:scale-95"
+                >
+                  Tap to view
+                </button>
+              </div>
+            </div>
+          )}
+          {post.sensitive && revealed && (
+            <button
+              onClick={() => setRevealed(false)}
+              aria-label="Hide sensitive media"
+              className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-zinc-900/60 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur"
+            >
+              <EyeOff className="size-3" /> Hide
+            </button>
+          )}
+        </div>
       )}
+
 
       <footer className="flex items-center gap-1 pt-1 text-zinc-500">
         <Action
