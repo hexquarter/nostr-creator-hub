@@ -6,6 +6,8 @@ import { FeaturedCreators } from "@/components/featured-creators";
 import { PostCard, type Post } from "@/components/post-card";
 import { PremiumPost } from "@/components/premium-post";
 import { MobileNav } from "@/components/mobile-nav";
+import { MobileTopBar } from "@/components/mobile-topbar";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
