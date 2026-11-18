@@ -40,7 +40,8 @@ function WalletPage() {
 
   const wallet = nostr.wallet;
   const balance = wallet.balanceSats;
-  const lud16 = nostr.account?.profile.lud16 ?? nostr.account?.profile.lud06;
+  // Derived from the Nostr profile, so receiving never needs a separate wallet.
+  const address = wallet.address ?? nostr.account?.profile.lud16 ?? nostr.account?.profile.lud06;
 
   const loadTransactions = useCallback(async () => {
     if (!wallet.connected) return;
@@ -74,11 +75,15 @@ function WalletPage() {
               <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
                 Balance
               </p>
-              {wallet.connected && (
+              {wallet.connected ? (
                 <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300">
                   {wallet.alias ?? "Connected"}
                 </span>
-              )}
+              ) : address ? (
+                <span className="rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">
+                  Receive-only
+                </span>
+              ) : null}
             </div>
             <div className="mt-2 flex items-baseline gap-2">
               <h2 className="text-[40px] font-semibold tracking-tight sm:text-[52px]">
@@ -87,11 +92,21 @@ function WalletPage() {
               <span className="text-[14px] font-medium text-zinc-400">sats</span>
             </div>
             <p className="mt-1 text-[13px] text-zinc-400">
-              ≈{" "}
-              <span className="text-zinc-200">
-                {formatUsd(balance != null && price ? (balance / 100_000_000) * price.usd : null)}
-              </span>{" "}
-              {price ? "USD · live pricestr feed" : "· waiting for the BTC price"}
+              {wallet.connected ? (
+                <>
+                  ≈{" "}
+                  <span className="text-zinc-200">
+                    {formatUsd(
+                      balance != null && price ? (balance / 100_000_000) * price.usd : null,
+                    )}
+                  </span>{" "}
+                  {price ? "USD · live pricestr feed" : "· waiting for the BTC price"}
+                </>
+              ) : address ? (
+                "Receiving is ready — add a wallet to send sats."
+              ) : (
+                "Add a Lightning address to your profile to get paid."
+              )}
             </p>
             <div className="mt-6 flex flex-wrap gap-2.5">
               <Action label="Receive" icon={ArrowDownLeft} primary onClick={ui.openReceive} />
@@ -102,23 +117,23 @@ function WalletPage() {
             {wallet.error && <p className="mt-3 text-[11.5px] text-rose-300">{wallet.error}</p>}
           </div>
           <div className="relative ml-auto grid place-items-center rounded-2xl bg-white/5 p-5 ring-1 ring-white/10 backdrop-blur-sm">
-            {lud16 ? (
+            {address ? (
               <>
                 <div className="grid size-40 place-items-center rounded-xl bg-white p-3">
-                  {lud16.includes("@") ? (
+                  {address.includes("@") ? (
                     <div className="grid h-full w-full place-items-center rounded-lg bg-gradient-to-br from-amber-200 to-orange-300 text-center text-[11px] font-semibold text-amber-900">
-                      {lud16}
+                      {address}
                     </div>
                   ) : (
-                    <QRCodeSVG value={lud16} size={136} level="M" />
+                    <QRCodeSVG value={address} size={136} level="M" />
                   )}
                 </div>
                 <p className="mt-3 max-w-[180px] truncate text-center font-mono text-[10.5px] text-zinc-400">
-                  {lud16}
+                  {address}
                 </p>
                 <button
                   onClick={() => {
-                    void navigator.clipboard.writeText(lud16);
+                    void navigator.clipboard.writeText(address);
                     toast.success("Lightning address copied");
                   }}
                   className="mt-1 text-[10.5px] font-semibold text-amber-300 hover:underline"
@@ -133,8 +148,8 @@ function WalletPage() {
                   {wallet.connected
                     ? "Add a Lightning address to your profile so anyone can zap you."
                     : nostr.account
-                      ? "Connect your wallet with a Nostr Wallet Connect string."
-                      : "Sign in and connect a wallet to receive zaps."}
+                      ? "Add a Lightning address to your profile, or connect a wallet to create invoices."
+                      : "Sign in to receive zaps with your Nostr identity."}
                 </p>
                 <button
                   onClick={() =>
@@ -144,7 +159,7 @@ function WalletPage() {
                   }
                   className="mt-3 rounded-full bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-white ring-1 ring-white/20 hover:bg-white/20"
                 >
-                  {nostr.account ? "Connect wallet" : "Sign in"}
+                  {nostr.account ? "Add a Lightning address" : "Sign in"}
                 </button>
               </div>
             )}
@@ -156,7 +171,13 @@ function WalletPage() {
       <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard
           label="Wallet"
-          value={wallet.connected ? (wallet.alias ?? "Connected") : "Not connected"}
+          value={
+            wallet.connected
+              ? (wallet.alias ?? "Connected")
+              : address
+                ? "Receive-only"
+                : "Not connected"
+          }
         />
         <StatCard label="Network" value={wallet.network ?? "—"} />
         <StatCard label="Sats / USD" value={price ? formatUsd(price.usd / 100_000_000, 4) : "—"} />
@@ -167,7 +188,7 @@ function WalletPage() {
         />
       </section>
 
-      {!wallet.connected && <WalletConnectCard />}
+      {!wallet.connected && <WalletConnectCard hasAddress={!!address} />}
 
       {/* Transactions */}
       <section className="overflow-hidden rounded-2xl bg-white shadow-card ring-1 ring-black/5">
@@ -250,16 +271,19 @@ function WalletPage() {
   );
 }
 
-function WalletConnectCard() {
+function WalletConnectCard({ hasAddress }: { hasAddress: boolean }) {
   const nostr = useNostr();
   const [uri, setUri] = useState("");
   const [busy, setBusy] = useState(false);
   return (
     <section className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5">
-      <h3 className="text-[13px] font-semibold text-zinc-900">Connect your Lightning wallet</h3>
+      <h3 className="text-[13px] font-semibold text-zinc-900">
+        {hasAddress ? "Add a wallet to send sats" : "Connect your Lightning wallet"}
+      </h3>
       <p className="mt-1 text-[12px] text-zinc-500">
-        Use a Nostr Wallet Connect (NIP-47) string from Alby, Zeus, Primal or your own node. Crays
-        keeps it encrypted in this browser.
+        {hasAddress
+          ? "You can already receive at your Lightning address. Connect a Nostr Wallet Connect (NIP-47) wallet to send sats, pay invoices and zap creators."
+          : "Use a Nostr Wallet Connect (NIP-47) string from Alby, Zeus, Primal or your own node. Crays keeps it encrypted in this browser."}
       </p>
       <div className="mt-3 flex flex-col gap-2 sm:flex-row">
         <input

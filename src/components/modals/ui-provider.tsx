@@ -1096,6 +1096,7 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
 function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const nostr = useNostr();
   const price = useBtcPrice();
+  const address = nostr.wallet.address;
   const [amount, setAmount] = useState(1000);
   const [invoice, setInvoice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1132,11 +1133,37 @@ function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void })
           <DialogDescription>
             {nostr.wallet.connected
               ? "Create a Lightning invoice from your connected wallet."
-              : "Connect a Lightning wallet to receive payments."}
+              : address
+                ? "Share your Lightning address — payments arrive with no setup."
+                : "Add a Lightning address to your profile, or connect a wallet."}
           </DialogDescription>
         </DialogHeader>
         {!nostr.wallet.connected ? (
-          <WalletConnectBlock />
+          address ? (
+            <div className="rounded-xl bg-zinc-50 p-5 text-center ring-1 ring-zinc-100">
+              <div className="mx-auto grid size-44 place-items-center rounded-xl bg-white p-3 shadow-sm">
+                {address.includes("@") ? (
+                  <div className="grid h-full w-full place-items-center rounded-lg bg-gradient-to-br from-amber-200 to-orange-300 px-3 text-center text-[12px] font-semibold text-amber-900">
+                    {address}
+                  </div>
+                ) : (
+                  <QRCodeSVG value={address} size={152} level="M" />
+                )}
+              </div>
+              <p className="mt-3 break-all font-mono text-[11px] text-zinc-600">{address}</p>
+              <button
+                onClick={() => {
+                  void navigator.clipboard.writeText(address);
+                  toast.success("Lightning address copied");
+                }}
+                className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand hover:underline"
+              >
+                <Copy className="size-3" /> Copy Lightning address
+              </button>
+            </div>
+          ) : (
+            <WalletConnectBlock />
+          )
         ) : (
           <>
             {invoice ? (
@@ -1172,7 +1199,7 @@ function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void })
         )}
         <DialogFooter>
           <GhostBtn onClick={onClose}>Close</GhostBtn>
-          {nostr.wallet.connected && (
+          {nostr.wallet.connected ? (
             <PrimaryBtn
               disabled={busy}
               onClick={() =>
@@ -1186,7 +1213,17 @@ function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void })
               {busy ? <Loader2 className="size-4 animate-spin" /> : null}
               {invoice ? "Copy invoice" : "Generate invoice"}
             </PrimaryBtn>
-          )}
+          ) : address ? (
+            <PrimaryBtn
+              onClick={() => {
+                void navigator.clipboard.writeText(address);
+                toast.success("Lightning address copied");
+                onClose();
+              }}
+            >
+              <Copy className="size-4" /> Copy address
+            </PrimaryBtn>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -1,6 +1,5 @@
 import { useNostr } from "@/components/nostr-provider";
 import { useUI } from "@/components/modals/ui-provider";
-import { formatUsd, useBtcPrice } from "@/lib/nostr/price";
 import { Crown, Users, Zap } from "lucide-react";
 
 /**
@@ -10,7 +9,6 @@ import { Crown, Users, Zap } from "lucide-react";
 export function CreatorToolsHero({ compact = false }: { compact?: boolean }) {
   const ui = useUI();
   const nostr = useNostr();
-  const price = useBtcPrice();
   const profile = nostr.account?.profile;
   const lud16 = profile?.lud16 ?? profile?.lud06;
   const signedIn = !!nostr.account;
@@ -72,7 +70,7 @@ export function CreatorToolsHero({ compact = false }: { compact?: boolean }) {
         </div>
       </div>
       {!compact && (
-        <dl className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <dl className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Metric
             icon={Zap}
             label="Lightning address"
@@ -83,7 +81,6 @@ export function CreatorToolsHero({ compact = false }: { compact?: boolean }) {
             label="Followers"
             value={signedIn ? "On your relays" : "Your audience, on Nostr"}
           />
-          <Metric icon={Crown} label="BTC price" value={price ? formatUsd(price.usd, 0) : "—"} />
         </dl>
       )}
     </section>

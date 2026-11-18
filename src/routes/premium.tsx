@@ -1,19 +1,22 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { PageShell } from "@/components/page-shell";
 import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
-import { useBtcPrice, formatUsd } from "@/lib/nostr/price";
 import { CreatorToolsHero } from "@/components/creator-tools-hero";
+import { fetchFeed, fetchProfileStats } from "@/lib/nostr/social";
+import { compactNumber } from "@/lib/format";
 import {
   Zap,
-  Check,
-  Sparkles,
   Users,
   Link as LinkIcon,
   FileText,
   Camera,
   KeyRound,
   MessageCircle,
+  Crown,
+  Wallet,
+  Loader2,
 } from "lucide-react";
 
 export const Route = createFileRoute("/premium")({
@@ -64,11 +67,7 @@ const features = [
 ];
 
 function Premium() {
-  const ui = useUI();
   const nostr = useNostr();
-  const price = useBtcPrice();
-  const profile = nostr.account?.profile;
-  const lud16 = profile?.lud16 ?? profile?.lud06;
 
   return (
     <PageShell
@@ -77,60 +76,8 @@ function Premium() {
     >
       <CreatorToolsHero />
 
-      {/* Plan card */}
       <section className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">
-        <div className="relative flex flex-col overflow-hidden rounded-2xl bg-zinc-900 p-7 text-white shadow-elevated ring-1 ring-zinc-800">
-          <div
-            className="absolute inset-0 opacity-50"
-            style={{
-              background:
-                "radial-gradient(at 0% 0%, oklch(0.7 0.2 50 / 0.4) 0, transparent 55%), radial-gradient(at 100% 100%, oklch(0.55 0.22 260 / 0.35) 0, transparent 55%)",
-            }}
-          />
-          <div className="relative">
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-950">
-              <Sparkles className="size-2.5" /> Free while in beta
-            </span>
-            <div className="mt-4 flex items-baseline gap-1.5">
-              <span className="text-[48px] font-semibold leading-none tracking-tight">0</span>
-              <span className="text-[13px] text-zinc-400">sats / month</span>
-            </div>
-            <p className="mt-2 text-[13px] text-zinc-300">
-              No card, no subscription. You only pay network fees when you move sats.
-            </p>
-
-            <button
-              onClick={() =>
-                nostr.account ? ui.openReceive() : ui.openAuth({ intent: "get paid on Nostr" })
-              }
-              className="mt-6 w-full rounded-xl bg-white py-3 text-[13.5px] font-semibold text-zinc-900 transition-colors hover:bg-zinc-100"
-            >
-              {nostr.account ? "Get paid with Lightning" : "Create your identity"}
-            </button>
-            <p className="mt-2 text-center text-[11px] text-zinc-400">
-              {price
-                ? `1 sat ≈ ${formatUsd(price.usd / 100_000_000, 4)} · 10k sats ≈ ${formatUsd((10_000 / 100_000_000) * price.usd)}`
-                : "Live BTC price via pricestr.xyz over Nostr"}
-            </p>
-
-            <ul className="mt-6 space-y-3 border-t border-white/10 pt-5">
-              {[
-                "Passkey sign-in and encrypted key backup",
-                "Notes, replies and long-form articles",
-                "Zaps in and out with NIP-47 wallets",
-                "Instagram import with Blossom media",
-                "Follow lists and bookmarks stored on Nostr",
-                "Encrypted direct messages",
-                "Open source, no lock-in",
-              ].map((f) => (
-                <li key={f} className="flex items-start gap-2.5 text-[13px]">
-                  <Check className="mt-0.5 size-4 shrink-0 text-amber-300" strokeWidth={3} />
-                  <span className="text-zinc-200">{f}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
+        <CreatorDashboard />
 
         {/* Feature grid */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -149,31 +96,6 @@ function Premium() {
         </div>
       </section>
 
-      {/* Wallet nudge */}
-      {!nostr.wallet.connected && (
-        <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5">
-          <div className="flex items-center gap-3">
-            <span className="grid size-10 place-items-center rounded-xl bg-amber-50 text-amber-600">
-              <Zap className="size-5" />
-            </span>
-            <div>
-              <p className="text-[13px] font-semibold text-zinc-900">Connect a Lightning wallet</p>
-              <p className="text-[12px] text-zinc-500">
-                Add a Nostr Wallet Connect string to send and receive zaps.
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() =>
-              nostr.account ? ui.openReceive() : ui.openAuth({ intent: "connect a wallet" })
-            }
-            className="rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black"
-          >
-            Connect wallet
-          </button>
-        </section>
-      )}
-
       <p className="flex items-center justify-center gap-1.5 text-center text-[11.5px] text-zinc-400">
         <LinkIcon className="size-3" />
         {nostr.account
@@ -181,5 +103,174 @@ function Premium() {
           : "Powered by Nostr + Lightning"}
       </p>
     </PageShell>
+  );
+}
+
+type DashboardStats = { posts: number; followers: number; following: number };
+
+/**
+ * Activity, subscription status and earnings in one place. The Lightning
+ * address is read from the Nostr profile, so there is no separate wallet to
+ * create before you can get paid.
+ */
+function CreatorDashboard() {
+  const ui = useUI();
+  const nostr = useNostr();
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [zapsEarned, setZapsEarned] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const pubkey = nostr.account?.pubkey;
+  const lud16 = nostr.account?.profile.lud16 ?? nostr.account?.profile.lud06;
+
+  useEffect(() => {
+    if (!pubkey) {
+      setStats(null);
+      setZapsEarned(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      fetchProfileStats(pubkey),
+      fetchFeed({ authors: [pubkey], includeReplies: false, limit: 100, timeout: 6500 }),
+    ])
+      .then(([result, feed]) => {
+        if (cancelled) return;
+        setStats(result);
+        setZapsEarned(feed.reduce((sum, note) => sum + note.counts.zapSats, 0));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pubkey]);
+
+  if (!nostr.account) {
+    return (
+      <section className="flex flex-col rounded-2xl bg-white p-6 shadow-card ring-1 ring-black/5 sm:p-7">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+          Creator dashboard
+        </h3>
+        <p className="mt-2 text-[15px] font-semibold text-zinc-900">
+          Activity, plan and earnings — one place.
+        </p>
+        <p className="mt-1 text-[12.5px] leading-relaxed text-zinc-500">
+          Sign in to see your posts, followers, zaps earned and the Lightning address tied to your
+          Nostr key.
+        </p>
+        <button
+          onClick={() => ui.openAuth({ intent: "open your creator dashboard" })}
+          className="mt-5 w-full rounded-xl bg-zinc-900 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-black"
+        >
+          Create your account
+        </button>
+        <p className="mt-2 text-center text-[11px] text-zinc-400">Free while in beta · no card</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="flex flex-col rounded-2xl bg-white p-6 shadow-card ring-1 ring-black/5 sm:p-7">
+      <div className="flex items-center justify-between">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+          Creator dashboard
+        </h3>
+        {loading ? (
+          <Loader2 className="size-3.5 animate-spin text-zinc-400" />
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold text-emerald-600">
+            <span className="size-1.5 rounded-full bg-emerald-500" /> Live
+          </span>
+        )}
+      </div>
+
+      {/* Activity */}
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <DashboardStat label="Posts" value={stats ? compactNumber(stats.posts) : "—"} />
+        <DashboardStat label="Followers" value={stats ? compactNumber(stats.followers) : "—"} />
+        <DashboardStat label="Following" value={stats ? compactNumber(stats.following) : "—"} />
+      </div>
+
+      <div className="mt-5 space-y-3 border-t border-zinc-100 pt-4">
+        <DashboardRow
+          icon={Zap}
+          label="Zaps earned"
+          value={zapsEarned == null ? "—" : `${compactNumber(zapsEarned)} sats`}
+          hint="From your notes on the relays"
+        />
+        <DashboardRow
+          icon={Crown}
+          label="Subscription"
+          value="Free while in beta"
+          hint="0 sats / month · no card"
+        />
+        <DashboardRow
+          icon={Wallet}
+          label="Lightning address"
+          value={lud16 ?? "Not set"}
+          hint={lud16 ? "Ready to receive zaps" : "Add one in Settings → Profile"}
+          mono={!!lud16}
+        />
+      </div>
+
+      <div className="mt-5 flex gap-2">
+        <button
+          onClick={() => ui.openCompose({ mode: "post" })}
+          className="flex-1 rounded-xl bg-zinc-900 py-2.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-black"
+        >
+          Write a post
+        </button>
+        <Link
+          to="/wallet"
+          className="flex-1 rounded-xl bg-zinc-100 py-2.5 text-center text-[12.5px] font-semibold text-zinc-700 transition-colors hover:bg-zinc-200"
+        >
+          Open wallet
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+function DashboardStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-100">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</p>
+      <p className="mt-0.5 text-[15px] font-semibold tracking-tight text-zinc-900">{value}</p>
+    </div>
+  );
+}
+
+function DashboardRow({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  mono,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  hint?: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand">
+        <Icon className="size-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</p>
+        <p
+          className={`truncate text-[13px] font-semibold text-zinc-900 ${mono ? "font-mono text-[12px]" : ""}`}
+        >
+          {value}
+        </p>
+        {hint && <p className="truncate text-[11px] text-zinc-400">{hint}</p>}
+      </div>
+    </div>
   );
 }

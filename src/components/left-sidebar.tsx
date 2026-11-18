@@ -10,7 +10,6 @@ import {
   Wallet,
   User,
   Settings,
-  Zap,
   Camera,
   LogIn,
   LogOut,
@@ -19,7 +18,6 @@ import { useEffect, useState } from "react";
 import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
 import { AvatarTile } from "@/components/avatar-tile";
-import { formatSats } from "@/lib/nostr/price";
 import { compactNumber } from "@/lib/format";
 import { fetchProfileStats } from "@/lib/nostr/social";
 
@@ -65,8 +63,6 @@ export function LeftSidebar() {
       cancelled = true;
     };
   }, [pubkey]);
-
-  const balance = nostr.wallet.balanceSats;
 
   return (
     <aside className="sticky top-0 hidden h-screen flex-col py-6 lg:flex">
@@ -167,29 +163,6 @@ export function LeftSidebar() {
               <Stat label="Following" value={stats ? compactNumber(stats.following) : "—"} />
             </div>
           </div>
-        )}
-
-        {nostr.account && (
-          <Link
-            to="/wallet"
-            className="flex items-center gap-3 rounded-xl bg-zinc-900 p-3 text-white hover:bg-black"
-          >
-            <div className="grid size-9 place-items-center rounded-lg bg-brand/15 text-brand">
-              <Zap className="size-4" strokeWidth={2.5} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">
-                Balance
-              </p>
-              <p className="truncate text-sm font-semibold">
-                {nostr.wallet.connected
-                  ? balance == null
-                    ? "Loading…"
-                    : `${formatSats(balance)} sats`
-                  : "Connect wallet"}
-              </p>
-            </div>
-          </Link>
         )}
       </div>
     </aside>

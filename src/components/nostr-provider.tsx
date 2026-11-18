@@ -78,6 +78,8 @@ export type WalletState = {
   alias?: string;
   network?: string;
   balanceSats: number | null;
+  /** Lightning address (lud16/lud06) derived from the Nostr profile. */
+  address?: string;
   error?: string;
 };
 
@@ -271,13 +273,14 @@ export function NostrProvider({ children }: { children: ReactNode }) {
         if (info.status === "rejected" && balance.status === "rejected") {
           throw info.reason instanceof Error ? info.reason : new Error("Wallet didn't respond");
         }
-        setWallet({
+        setWallet((w) => ({
           connected: true,
           loading: false,
           alias: info.status === "fulfilled" ? info.value.alias : undefined,
           network: info.status === "fulfilled" ? info.value.network : undefined,
           balanceSats: balance.status === "fulfilled" ? balance.value : null,
-        });
+          address: w.address,
+        }));
       } catch (error) {
         if (cancelled) return;
         setWallet({
@@ -290,6 +293,13 @@ export function NostrProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  // The Lightning address is derived from the Nostr identity, so receiving
+  // works without connecting a separate wallet.
+  useEffect(() => {
+    const address = account?.profile.lud16 ?? account?.profile.lud06 ?? undefined;
+    setWallet((w) => (w.address === address ? w : { ...w, address }));
+  }, [account?.profile.lud16, account?.profile.lud06]);
 
   const finishSignIn = useCallback(
     async (stored: StoredSession, signer: AppSigner, prfBacked = false) => {
@@ -554,13 +564,14 @@ export function NostrProvider({ children }: { children: ReactNode }) {
       }
       walletRef.current = client;
       await saveWalletConnection(uri);
-      setWallet({
+      setWallet((w) => ({
         connected: true,
         loading: false,
         alias: info.status === "fulfilled" ? info.value.alias : undefined,
         network: info.status === "fulfilled" ? info.value.network : undefined,
         balanceSats: balance.status === "fulfilled" ? balance.value : null,
-      });
+        address: w.address,
+      }));
     } catch (error) {
       setWallet({
         ...EMPTY_WALLET,
@@ -573,7 +584,7 @@ export function NostrProvider({ children }: { children: ReactNode }) {
   const disconnectWallet = useCallback(async () => {
     walletRef.current = null;
     clearWalletConnection();
-    setWallet(EMPTY_WALLET);
+    setWallet((w) => ({ ...EMPTY_WALLET, address: w.address }));
   }, []);
 
   const refreshBalance = useCallback(async () => {

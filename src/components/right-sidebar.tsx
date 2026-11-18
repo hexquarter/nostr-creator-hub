@@ -5,7 +5,6 @@ import { useNavigate } from "@tanstack/react-router";
 import { AvatarTile } from "./avatar-tile";
 import { useUI } from "./modals/ui-provider";
 import { useNostr } from "./nostr-provider";
-import { useBtcPrice, formatUsd, formatSats } from "@/lib/nostr/price";
 import { extractHashtags, fetchFeed, type FeedNote } from "@/lib/nostr/social";
 import type { Profile } from "@/lib/nostr/profiles";
 
@@ -13,7 +12,6 @@ export function RightSidebar() {
   const ui = useUI();
   const nostr = useNostr();
   const navigate = useNavigate();
-  const price = useBtcPrice();
   const [notes, setNotes] = useState<FeedNote[]>([]);
   const [followed, setFollowed] = useState<Record<string, boolean>>({});
 
@@ -71,52 +69,6 @@ export function RightSidebar() {
           ⌘K
         </kbd>
       </button>
-
-      {/* BTC price */}
-      <section className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5">
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-            Bitcoin Price
-          </h3>
-          <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500">
-            {price ? "Live" : "Connecting…"}
-          </span>
-        </div>
-        <div className="flex items-end justify-between">
-          <div>
-            <p className="text-2xl font-semibold tracking-tight text-zinc-900">
-              {formatUsd(price?.usd)}
-            </p>
-            <p className="mt-0.5 text-[11px] font-medium text-zinc-400">
-              USD ·{" "}
-              {price
-                ? `median of ${Object.keys(price.sources).length || 1} sources`
-                : "pricestr.xyz over Nostr"}
-            </p>
-          </div>
-          <svg viewBox="0 0 80 32" className="h-10 w-20 text-amber-500">
-            <path
-              d="M0 24 L10 22 L20 26 L30 18 L40 20 L50 12 L60 14 L70 6 L80 8"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M0 24 L10 22 L20 26 L30 18 L40 20 L50 12 L60 14 L70 6 L80 8 L80 32 L0 32 Z"
-              fill="currentColor"
-              opacity="0.1"
-            />
-          </svg>
-        </div>
-        {price && (
-          <p className="mt-3 border-t border-zinc-100 pt-2 text-[11px] text-zinc-400">
-            1 sat ≈ {formatUsd(price.usd / 100_000_000, 4)} · {formatSats(100_000)} sats ≈{" "}
-            {formatUsd((100_000 / 100_000_000) * price.usd)}
-          </p>
-        )}
-      </section>
 
       <section className="overflow-hidden rounded-2xl bg-white shadow-card ring-1 ring-black/5">
         <header className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
