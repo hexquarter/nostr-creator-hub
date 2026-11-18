@@ -9,7 +9,13 @@ import {
   type ReactNode,
 } from "react";
 import { toast } from "sonner";
-import { generateSecretKey, getPublicKey, nip19, type NostrEvent } from "nostr-tools";
+import {
+  generateSecretKey,
+  getPublicKey,
+  nip19,
+  type EventTemplate,
+  type NostrEvent,
+} from "nostr-tools";
 import {
   BunkerSigner,
   createNostrConnectURI,
@@ -65,6 +71,7 @@ import {
   type LightningAddressSource,
 } from "@/lib/nostr/lightning";
 import { requestZapInvoice } from "@/lib/nostr/zaps";
+import { syncCreatorBadges } from "@/lib/nostr/badges";
 
 export type NostrAuthMethod = "passkey" | "nsec" | "bunker" | "nostr-connect" | "nip07";
 
@@ -114,6 +121,8 @@ type NostrContextValue = {
   updateProfile: (patch: Partial<Profile>) => Promise<void>;
 
   publish: (input: PublishNoteInput) => Promise<NostrEvent>;
+  /** Sign and publish any event template (profile, badge proof, …). */
+  signAndPublish: (template: EventTemplate) => Promise<NostrEvent>;
   uploadMedia: (bytes: Uint8Array, mime: string) => Promise<string>;
   uploadFile: (file: File) => Promise<string>;
   react: (target: NostrEvent, content?: string) => Promise<void>;
@@ -211,6 +220,9 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     } catch {
       setBookmarks([]);
     }
+    // Badge purchases are signed events, so a membership follows the account
+    // to any device even though the local cache starts empty.
+    void syncCreatorBadges(pubkey).catch(() => undefined);
   }, []);
 
   // Restore a previous session from encrypted local storage.
@@ -522,6 +534,15 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     [requireSigner],
   );
 
+  const signAndPublish = useCallback(
+    async (template: EventTemplate) => {
+      const event = await requireSigner().signEvent(template);
+      await publishEvent(event);
+      return event;
+    },
+    [requireSigner],
+  );
+
   const uploadMedia = useCallback(
     async (bytes: Uint8Array, mime: string) => {
       const result = await uploadBlob(bytes, mime, requireSigner());
@@ -715,6 +736,7 @@ export function NostrProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       updateProfile,
       publish,
+      signAndPublish,
       uploadMedia,
       uploadFile,
       react,
@@ -749,6 +771,7 @@ export function NostrProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       updateProfile,
       publish,
+      signAndPublish,
       uploadMedia,
       uploadFile,
       react,

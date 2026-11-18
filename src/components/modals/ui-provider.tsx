@@ -24,12 +24,21 @@ import { addRelay, getCustomRelays, removeRelay } from "@/lib/nostr/relays";
 import {
   BADGE_DAYS,
   DEFAULT_BADGE_SATS,
+  announceCreatorBadge,
   daysLeft,
+  fetchCreatorMembers,
   grantCreatorBadge,
   isBadgeActive,
   useCreatorBadges,
 } from "@/lib/nostr/badges";
 import { lightningAddressFor } from "@/lib/nostr/lightning";
+import {
+  CREATOR_PASS_DAYS,
+  activateCreatorPass,
+  creatorPassDaysLeft,
+  isCreatorPassActive,
+  useCreatorPass,
+} from "@/lib/nostr/creator-pass";
 import { hasPasskey, hasWebAuthn } from "@/lib/nostr/passkey";
 import { useBtcPrice, satsToUsd, formatUsd } from "@/lib/nostr/price";
 import { requestPaymentInvoice, isLightningInvoice } from "@/lib/nostr/zaps";
@@ -602,6 +611,8 @@ function ComposeModal({
   options: ComposeOptions;
 }) {
   const nostr = useNostr();
+  const creatorPass = useCreatorPass();
+  const canPublishPremium = isCreatorPassActive(creatorPass);
   const [tab, setTab] = useState<"post" | "article" | "poll">(
     options.mode === "article" ? "article" : options.mode === "poll" ? "poll" : "post",
   );
@@ -638,7 +649,9 @@ function ComposeModal({
     setBusy(true);
     try {
       const tags: string[][] = [];
-      if (premium) tags.push(["premium", String(price)]);
+      // Selling memberships is a Crays creator-badge feature; never tag a post
+      // as members-only without it.
+      if (premium && canPublishPremium) tags.push(["premium", String(price)]);
       if (tab === "article") {
         const d = title.trim()
           ? title
@@ -757,38 +770,61 @@ function ComposeModal({
             </div>
           )}
           <div className="space-y-2">
-            <ToggleRow
-              icon={<Crown className="size-4 text-amber-600" />}
-              title="Members only"
-              hint={
-                premium
-                  ? `Your creator badge unlocks this and every members-only post (${price.toLocaleString()} sats / ${BADGE_DAYS} days).`
-                  : "Free for everyone."
-              }
-              tone="amber"
-              on={premium}
-              onToggle={() => setPremium((v) => !v)}
-            />
-            {premium && (
-              <div className="rounded-xl bg-amber-50/60 p-2 ring-1 ring-amber-100">
-                <p className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
-                  Badge price
+            {canPublishPremium ? (
+              <>
+                <ToggleRow
+                  icon={<Crown className="size-4 text-amber-600" />}
+                  title="Members only"
+                  hint={
+                    premium
+                      ? `Your creator badge unlocks this and every members-only post (${price.toLocaleString()} sats / ${BADGE_DAYS} days).`
+                      : "Free for everyone."
+                  }
+                  tone="amber"
+                  on={premium}
+                  onToggle={() => setPremium((v) => !v)}
+                />
+                {premium && (
+                  <div className="rounded-xl bg-amber-50/60 p-2 ring-1 ring-amber-100">
+                    <p className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+                      Badge price
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[500, 2000, 5000].map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => setPrice(p)}
+                          className={`rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors ${
+                            price === p
+                              ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200"
+                              : "text-amber-800/70"
+                          }`}
+                        >
+                          {p.toLocaleString()} sats
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="rounded-xl bg-amber-50/70 p-3 ring-1 ring-amber-100">
+                <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-amber-900">
+                  <Lock className="size-3.5" /> Members-only posts need the Crays badge
                 </p>
-                <div className="grid grid-cols-3 gap-2">
-                  {[500, 2000, 5000].map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => setPrice(p)}
-                      className={`rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors ${
-                        price === p
-                          ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200"
-                          : "text-amber-800/70"
-                      }`}
-                    >
-                      {p.toLocaleString()} sats
-                    </button>
-                  ))}
-                </div>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-amber-800/80">
+                  The Crays creator badge lets you sell memberships with Lightning. It’s free while
+                  Crays is in beta.
+                </p>
+                <button
+                  onClick={() => {
+                    activateCreatorPass();
+                    toast.success("Crays creator badge active — you can post members-only content");
+                  }}
+                  className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-3 py-1.5 text-[11.5px] font-semibold text-white transition-colors hover:bg-amber-600"
+                >
+                  <Crown className="size-3.5" /> Get Crays badge
+                </button>
               </div>
             )}
 
@@ -864,6 +900,7 @@ function BadgeModal({
   const price = useBtcPrice();
   const badges = useCreatorBadges();
   const [creatorProfile, setCreatorProfile] = useState<Profile | null>(null);
+  const [members, setMembers] = useState<number | null>(null);
   const [nwcUri, setNwcUri] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -886,12 +923,18 @@ function BadgeModal({
   useEffect(() => {
     if (!open || !creator) {
       setCreatorProfile(null);
+      setMembers(null);
       return;
     }
     let cancelled = false;
     fetchProfile(creator)
       .then((profile) => {
         if (!cancelled) setCreatorProfile(profile);
+      })
+      .catch(() => undefined);
+    fetchCreatorMembers(creator)
+      .then((count) => {
+        if (!cancelled) setMembers(count);
       })
       .catch(() => undefined);
     return () => {
@@ -928,6 +971,14 @@ function BadgeModal({
       const invoice = await requestPaymentInvoice(address, sats);
       await nostr.payInvoice(invoice);
       const badge = grantCreatorBadge(creator, sats);
+      // Signed proof of the purchase: lets the creator count members and lets
+      // this reader restore the badge on another device.
+      void announceCreatorBadge({
+        creator,
+        sats,
+        expiresAt: badge.expiresAt,
+        signAndPublish: nostr.signAndPublish,
+      }).catch(() => undefined);
       toast.success(`Creator badge active — ${daysLeft(badge)} days of members-only posts`);
       onClose();
     } catch (error) {
@@ -976,6 +1027,11 @@ function BadgeModal({
               <p className="text-[11.5px] text-zinc-500">
                 {usd != null ? `≈ ${formatUsd(usd)} · ` : ""}paid directly to {name} over Lightning
               </p>
+              {members != null && members > 0 && (
+                <p className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-white/70 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800">
+                  <Users className="size-3" /> {members} member{members === 1 ? "" : "s"} already in
+                </p>
+              )}
             </div>
             <ul className="space-y-1.5 text-[12.5px] text-zinc-600">
               <li className="flex gap-2">
@@ -1104,36 +1160,55 @@ function ShareModal({
 // ---------- Upgrade ----------
 function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ui = useUI();
+  const pass = useCreatorPass();
+  const active = isCreatorPassActive(pass);
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Crown className="size-5 text-amber-500" />
-            Creator toolkit
+            Crays creator badge
           </DialogTitle>
           <DialogDescription>
-            Everything Crays adds on top of the open Nostr protocol. No subscription, no platform
-            cut.
+            The badge that lets you sell memberships. No platform cut — readers pay you directly
+            over Lightning.
           </DialogDescription>
         </DialogHeader>
-        <div className="rounded-2xl bg-gradient-to-br from-zinc-900 to-zinc-800 p-5 text-white">
-          <p className="text-[28px] font-bold tracking-tight">Free</p>
-          <p className="text-[12px] text-zinc-400">
-            You pay only Lightning network fees when you zap or get paid.
-          </p>
+        <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50 p-5 text-center ring-1 ring-amber-100">
+          {active && pass ? (
+            <>
+              <p className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-emerald-700">
+                <Check className="size-3.5" /> Active · {creatorPassDaysLeft(pass)} days left
+              </p>
+              <p className="mt-1 text-[15px] font-semibold text-zinc-900">
+                You can publish members-only posts
+              </p>
+              <p className="mt-1 text-[11.5px] text-zinc-500">Free while Crays is in beta</p>
+            </>
+          ) : (
+            <>
+              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">
+                Creator badge · {CREATOR_PASS_DAYS} days
+              </p>
+              <p className="mt-1 text-[28px] font-bold tracking-tight text-zinc-900">Free</p>
+              <p className="text-[11.5px] text-zinc-500">
+                While Crays is in beta · no card, no subscription
+              </p>
+            </>
+          )}
         </div>
         <ul className="space-y-1.5 text-[12.5px] text-zinc-700">
           {[
+            "Publish members-only posts and articles",
+            "Set your badge price — readers pay you over Lightning",
+            "See members and members-only posts in your dashboard",
             "Passkey sign-in — no seed phrase to remember",
-            "Publish notes and long-form articles to Nostr",
             "Receive zaps straight to your Lightning wallet",
             "Import your Instagram posts in a few clicks",
-            "Media hosted on Blossom, embedded in your events",
-            "Encrypted direct messages over NIP-04",
           ].map((f) => (
             <li key={f} className="flex gap-2">
-              <Check className="size-4 text-emerald-500" /> {f}
+              <Check className="size-4 shrink-0 text-emerald-500" /> {f}
             </li>
           ))}
         </ul>
@@ -1148,14 +1223,27 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
             >
               Import Instagram
             </GhostBtn>
-            <PrimaryBtn
-              onClick={() => {
-                onClose();
-                ui.openCompose({ mode: "post" });
-              }}
-            >
-              Write a post
-            </PrimaryBtn>
+            {active ? (
+              <PrimaryBtn
+                onClick={() => {
+                  onClose();
+                  ui.openCompose({ mode: "post" });
+                }}
+              >
+                Write a post
+              </PrimaryBtn>
+            ) : (
+              <PrimaryBtn
+                className="!bg-amber-500 hover:!bg-amber-600"
+                onClick={() => {
+                  activateCreatorPass();
+                  toast.success("Crays creator badge active — members-only posts unlocked");
+                  onClose();
+                }}
+              >
+                <Crown className="size-4" /> Activate badge
+              </PrimaryBtn>
+            )}
           </div>
         </DialogFooter>
       </DialogContent>

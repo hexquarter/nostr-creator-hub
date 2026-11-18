@@ -17,12 +17,15 @@ import {
   BADGE_DAYS,
   badgePriceFromNotes,
   daysLeft,
+  fetchCreatorMembers,
   isBadgeActive,
   useCreatorBadges,
 } from "@/lib/nostr/badges";
+import { activateCreatorPass, isCreatorPassActive, useCreatorPass } from "@/lib/nostr/creator-pass";
 import {
   BadgeCheck,
   Calendar,
+  Check,
   Crown,
   Link as LinkIcon,
   MapPin,
@@ -32,6 +35,8 @@ import {
   Loader2,
   LogIn,
   Copy,
+  Lock,
+  Users,
   UserPlus,
   UserCheck,
 } from "lucide-react";
@@ -144,6 +149,25 @@ function Profile() {
     void load();
   }, [load]);
 
+  const [memberCount, setMemberCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!pubkey) {
+      setMemberCount(null);
+      return;
+    }
+    let active = true;
+    setMemberCount(null);
+    fetchCreatorMembers(pubkey, 6000)
+      .then((count) => {
+        if (active) setMemberCount(count);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [pubkey]);
+
   const visible = useMemo(() => {
     if (tab === "media") return notes.filter((note) => note.images.length > 0);
     if (tab === "articles") return notes.filter((note) => note.event.kind === 30023);
@@ -152,7 +176,7 @@ function Profile() {
   }, [notes, tab]);
 
   const badges = useCreatorBadges();
-
+  const creatorPass = useCreatorPass();
   if (!pubkey) {
     return (
       <PageShell title="Profile" subtitle="Public face of your sovereign identity.">
@@ -184,6 +208,10 @@ function Profile() {
   const following = nostr.isFollowing(pubkey);
   const badgePrice = badgePriceFromNotes(notes);
   const ownedBadge = badges.find((badge) => badge.creator === pubkey && isBadgeActive(badge));
+  const premiumCount = notes.filter((note) => note.premium).length;
+  const hasCreatorPass = isCreatorPassActive(creatorPass);
+  const hasBadgeProgram = badgePrice != null;
+  const showMembership = hasBadgeProgram || isOwn;
 
   const toggleFollow = async () => {
     if (!ui.requireAuth("follow creators")) return;
@@ -352,6 +380,96 @@ function Profile() {
         </div>
       </section>
 
+      {showMembership && (
+        <section className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+                <Crown className="size-3.5" /> Creator membership
+              </h3>
+              <p className="mt-1.5 text-[15px] font-semibold text-zinc-900">
+                {hasBadgeProgram
+                  ? `Members-only posts from ${name}`
+                  : "Turn your audience into members"}
+              </p>
+              <p className="mt-1 max-w-xl text-[12.5px] leading-relaxed text-zinc-500">
+                {hasBadgeProgram
+                  ? `One badge unlocks every members-only post from ${name} for ${BADGE_DAYS} days. Readers pay ${name} directly over Lightning.`
+                  : "Publish a members-only post to start your badge program. Readers buy one badge and unlock everything you mark members-only."}
+              </p>
+            </div>
+
+            {!isOwn && hasBadgeProgram && !ownedBadge && (
+              <button
+                onClick={() => ui.openBadge({ creator: pubkey, name, sats: badgePrice })}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
+              >
+                <Crown className="size-4" /> Get badge · {compactNumber(badgePrice)} sats
+              </button>
+            )}
+            {!isOwn && ownedBadge && (
+              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-4 py-2.5 text-[12.5px] font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                <Check className="size-4" /> Member · {daysLeft(ownedBadge)} days left
+              </span>
+            )}
+            {isOwn && hasBadgeProgram && (
+              <button
+                onClick={() => ui.openCompose({ mode: "post" })}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
+              >
+                <Crown className="size-4" /> Write members-only post
+              </button>
+            )}
+            {isOwn && !hasBadgeProgram && (
+              <button
+                onClick={() => {
+                  if (!hasCreatorPass) {
+                    activateCreatorPass();
+                    toast.success("Crays creator badge active — members-only posts unlocked");
+                  }
+                  ui.openCompose({ mode: "post" });
+                }}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
+              >
+                {hasCreatorPass ? <Crown className="size-4" /> : <Lock className="size-4" />}
+                {hasCreatorPass ? "Start your badge program" : "Get Crays badge"}
+              </button>
+            )}
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <MembershipStat
+              label="Badge price"
+              value={hasBadgeProgram ? `${compactNumber(badgePrice)} sats` : "Not set"}
+            />
+            <MembershipStat
+              label="Members"
+              value={memberCount == null ? "—" : compactNumber(memberCount)}
+            />
+            <MembershipStat
+              label="Members-only posts"
+              value={hasBadgeProgram ? compactNumber(premiumCount) : "—"}
+            />
+            <MembershipStat label="Access period" value={`${BADGE_DAYS} days`} />
+          </div>
+
+          {!isOwn && hasBadgeProgram && (
+            <p className="mt-3 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-zinc-500">
+              <Users className="mt-0.5 size-3.5 shrink-0" />
+              {ownedBadge
+                ? `Your badge covers all ${premiumCount} members-only post${premiumCount === 1 ? "" : "s"} from ${name}.`
+                : `Buying the badge unlocks all ${premiumCount} members-only post${premiumCount === 1 ? "" : "s"} from ${name} — no per-post payments.`}
+            </p>
+          )}
+          {isOwn && !hasCreatorPass && (
+            <p className="mt-3 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-zinc-500">
+              <Lock className="mt-0.5 size-3.5 shrink-0" /> A Crays creator badge is required to
+              sell memberships. It’s free while Crays is in beta.
+            </p>
+          )}
+        </section>
+      )}
+
       {/* Tabs */}
       <div className="flex w-fit items-center gap-1 rounded-full bg-white p-1 text-[12px] font-medium shadow-card ring-1 ring-black/5">
         {TABS.map((t) => (
@@ -402,5 +520,16 @@ function Profile() {
         </div>
       )}
     </PageShell>
+  );
+}
+
+function MembershipStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-zinc-50 px-3.5 py-2.5 ring-1 ring-zinc-100">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</p>
+      <p className="mt-0.5 truncate text-[14px] font-semibold tracking-tight text-zinc-900">
+        {value}
+      </p>
+    </div>
   );
 }

@@ -1,11 +1,19 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { PageShell } from "@/components/page-shell";
 import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
 import { CreatorToolsHero } from "@/components/creator-tools-hero";
 import { fetchFeed, fetchProfileStats } from "@/lib/nostr/social";
-import { BADGE_DAYS, badgePriceFromNotes } from "@/lib/nostr/badges";
+import { BADGE_DAYS, badgePriceFromNotes, fetchCreatorMembers } from "@/lib/nostr/badges";
+import {
+  CREATOR_PASS_DAYS,
+  activateCreatorPass,
+  creatorPassDaysLeft,
+  isCreatorPassActive,
+  useCreatorPass,
+} from "@/lib/nostr/creator-pass";
 import { compactNumber } from "@/lib/format";
 import {
   Zap,
@@ -117,10 +125,13 @@ type DashboardStats = { posts: number; followers: number; following: number };
 function CreatorDashboard() {
   const ui = useUI();
   const nostr = useNostr();
+  const creatorPass = useCreatorPass();
+  const passActive = isCreatorPassActive(creatorPass);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [zapsEarned, setZapsEarned] = useState<number | null>(null);
   const [premiumPosts, setPremiumPosts] = useState(0);
   const [badgePrice, setBadgePrice] = useState<number | null>(null);
+  const [members, setMembers] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
   const pubkey = nostr.account?.pubkey;
@@ -133,6 +144,7 @@ function CreatorDashboard() {
       setZapsEarned(null);
       setPremiumPosts(0);
       setBadgePrice(null);
+      setMembers(null);
       return;
     }
     let cancelled = false;
@@ -140,13 +152,15 @@ function CreatorDashboard() {
     Promise.all([
       fetchProfileStats(pubkey),
       fetchFeed({ authors: [pubkey], includeReplies: false, limit: 100, timeout: 6500 }),
+      fetchCreatorMembers(pubkey, 6500).catch(() => 0),
     ])
-      .then(([result, feed]) => {
+      .then(([result, feed, memberCount]) => {
         if (cancelled) return;
         setStats(result);
         setZapsEarned(feed.reduce((sum, note) => sum + note.counts.zapSats, 0));
         setPremiumPosts(feed.filter((note) => note.premium).length);
         setBadgePrice(badgePriceFromNotes(feed));
+        setMembers(memberCount);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -197,10 +211,11 @@ function CreatorDashboard() {
       </div>
 
       {/* Activity */}
-      <div className="mt-4 grid grid-cols-3 gap-2">
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <DashboardStat label="Posts" value={stats ? compactNumber(stats.posts) : "—"} />
         <DashboardStat label="Followers" value={stats ? compactNumber(stats.followers) : "—"} />
-        <DashboardStat label="Following" value={stats ? compactNumber(stats.following) : "—"} />
+        <DashboardStat label="Members" value={members == null ? "—" : compactNumber(members)} />
+        <DashboardStat label="Members-only" value={compactNumber(premiumPosts)} />
       </div>
 
       <div className="mt-5 space-y-3 border-t border-zinc-100 pt-4">
@@ -221,14 +236,35 @@ function CreatorDashboard() {
           hint={
             badgePrice == null
               ? "Post something members-only to start your badge program"
-              : `${premiumPosts} members-only post${premiumPosts === 1 ? "" : "s"} · badge holders see them all`
+              : `${premiumPosts} members-only post${premiumPosts === 1 ? "" : "s"} · ${members ?? 0} member${members === 1 ? "" : "s"}`
           }
         />
         <DashboardRow
           icon={Crown}
-          label="Subscription"
-          value="Free while in beta"
-          hint="0 sats / month · no card"
+          label="Crays badge"
+          value={
+            passActive && creatorPass
+              ? `Active · ${creatorPassDaysLeft(creatorPass)} days left`
+              : "Not active"
+          }
+          hint={
+            passActive
+              ? `Free while in beta · renews in ${CREATOR_PASS_DAYS} days`
+              : "Required to sell memberships and post members-only content"
+          }
+          action={
+            passActive ? undefined : (
+              <button
+                onClick={() => {
+                  activateCreatorPass();
+                  toast.success("Crays creator badge active — members-only posts unlocked");
+                }}
+                className="shrink-0 rounded-full bg-amber-500 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-amber-600"
+              >
+                Activate
+              </button>
+            )
+          }
         />
         <DashboardRow
           icon={Wallet}
@@ -278,12 +314,14 @@ function DashboardRow({
   value,
   hint,
   mono,
+  action,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string;
   hint?: string;
   mono?: boolean;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="flex items-start gap-3">
@@ -299,6 +337,7 @@ function DashboardRow({
         </p>
         {hint && <p className="truncate text-[11px] text-zinc-400">{hint}</p>}
       </div>
+      {action}
     </div>
   );
 }
