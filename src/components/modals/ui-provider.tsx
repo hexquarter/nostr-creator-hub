@@ -1640,21 +1640,6 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
               )}
             </>
           )}
-
-          <ul className="grid gap-x-3 gap-y-1.5 text-[12px] text-zinc-700 sm:grid-cols-2">
-            {[
-              "Publish members-only posts",
-              "Sell memberships & single posts",
-              "Set your own prices",
-              "See members and earnings",
-              "Passkey sign-in",
-              "Receive zaps to your wallet",
-            ].map((f) => (
-              <li key={f} className="flex gap-1.5">
-                <Check className="size-3.5 shrink-0 text-emerald-500" /> {f}
-              </li>
-            ))}
-          </ul>
         </div>
         <DialogFooter className="gap-2 sm:justify-between">
           <GhostBtn onClick={onClose}>Close</GhostBtn>
