@@ -1,30 +1,50 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * The Crays creator badge is the platform entitlement that lets an account
- * sell memberships: publish members-only posts and run a creator badge.
+ * The Crays badge is the platform subscription a creator pays for, monthly, to
+ * unlock the paid side of Crays: selling memberships, publishing members-only
+ * posts and getting paid by fans.
  *
- * It is separate from the creator badges readers buy, so the rule lives in one
- * place and can be priced later without touching the post form. Crays is in
- * beta, so activating it is free today.
+ * It is separate from the memberships readers buy from a creator, so the two
+ * prices never get mixed up: Crays bills the creator, the creator bills their
+ * audience.
  */
 export type CreatorPass = {
   active: boolean;
   activatedAt: number;
   expiresAt: number;
-  plan: "beta";
+  plan: "monthly";
+  /** Sats actually paid for the current period, when known. */
+  sats?: number;
 };
 
-export const CREATOR_PASS_DAYS = 365;
+export const CREATOR_PASS_DAYS = 30;
+/** Crays' monthly price, billed in sats at the live BTC rate. */
+export const CREATOR_PASS_USD = 50;
 
-const STORAGE_KEY = "crays.creator-pass.v1";
+/**
+ * Where creators pay for the Crays badge. Point this at the real Crays
+ * Lightning address (or LNURL) with `VITE_CRAYS_LIGHTNING_ADDRESS`; the
+ * fallback is a placeholder until that address exists.
+ */
+export const CREATOR_PASS_ADDRESS =
+  (import.meta.env.VITE_CRAYS_LIGHTNING_ADDRESS as string | undefined)?.trim() || "crays@npub.cash";
+
+const STORAGE_PREFIX = "crays.creator-pass.v2";
+const LEGACY_STORAGE_KEY = "crays.creator-pass.v1";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** The badge belongs to a creator account, not to the device. */
+let owner: string | null = null;
 let cache: CreatorPass | null | undefined;
 const listeners = new Set<() => void>();
 
 function canUseStorage() {
   return typeof window !== "undefined" && !!window.localStorage;
+}
+
+function storageKey(pubkey: string) {
+  return `${STORAGE_PREFIX}.${pubkey}`;
 }
 
 function isPass(value: unknown): value is CreatorPass {
@@ -37,11 +57,9 @@ function isPass(value: unknown): value is CreatorPass {
   );
 }
 
-function load(): CreatorPass | null {
-  if (!canUseStorage()) return null;
+function parsePass(raw: string | null): CreatorPass | null {
+  if (!raw) return null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     return isPass(parsed) ? parsed : null;
   } catch {
@@ -49,12 +67,37 @@ function load(): CreatorPass | null {
   }
 }
 
+function load(pubkey: string): CreatorPass | null {
+  if (!canUseStorage()) return null;
+  try {
+    const scoped = window.localStorage.getItem(storageKey(pubkey));
+    if (scoped) return parsePass(scoped);
+    // Move a badge saved before it was scoped to an account.
+    const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!legacy) return null;
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    const pass = parsePass(legacy);
+    if (pass) window.localStorage.setItem(storageKey(pubkey), JSON.stringify(pass));
+    return pass;
+  } catch {
+    return null;
+  }
+}
+
+/** Point the store at the signed-in creator's badge. */
+export function setCreatorPassOwner(pubkey: string | null) {
+  if (owner === pubkey) return;
+  owner = pubkey;
+  cache = pubkey ? load(pubkey) : null;
+  listeners.forEach((listener) => listener());
+}
+
 function persist(pass: CreatorPass | null) {
   cache = pass;
-  if (canUseStorage()) {
+  if (owner && canUseStorage()) {
     try {
-      if (pass) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(pass));
-      else window.localStorage.removeItem(STORAGE_KEY);
+      if (pass) window.localStorage.setItem(storageKey(owner), JSON.stringify(pass));
+      else window.localStorage.removeItem(storageKey(owner));
     } catch {
       // ignore quota errors
     }
@@ -63,7 +106,7 @@ function persist(pass: CreatorPass | null) {
 }
 
 export function getCreatorPass(): CreatorPass | null {
-  if (cache === undefined) cache = load();
+  if (cache === undefined) cache = owner ? load(owner) : null;
   return cache;
 }
 
@@ -71,13 +114,20 @@ export function isCreatorPassActive(pass: CreatorPass | null = getCreatorPass())
   return Boolean(pass && pass.active && pass.expiresAt > Date.now());
 }
 
-export function activateCreatorPass(): CreatorPass {
+/**
+ * Start (or extend) the monthly subscription. Renewing keeps whatever days are
+ * left instead of throwing them away.
+ */
+export function activateCreatorPass(sats?: number): CreatorPass {
   const now = Date.now();
+  const current = getCreatorPass();
+  const start = isCreatorPassActive(current) && current ? current.expiresAt : now;
   const pass: CreatorPass = {
     active: true,
     activatedAt: now,
-    expiresAt: now + CREATOR_PASS_DAYS * DAY_MS,
-    plan: "beta",
+    expiresAt: start + CREATOR_PASS_DAYS * DAY_MS,
+    plan: "monthly",
+    sats,
   };
   persist(pass);
   return pass;

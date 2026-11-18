@@ -29,8 +29,10 @@ export type FeedNote = {
   contentWarning?: string;
   /** Members-only post: readable with the creator's badge. */
   premium?: boolean;
-  /** Badge price (sats / month) carried by the post's `premium` tag. */
+  /** Monthly membership price (sats / 30 days) from the post's `premium` tag. */
   premiumSats?: number;
+  /** Price to unlock just this post, from its `premium-unlock` tag. */
+  premiumUnlockSats?: number;
   isReply: boolean;
   counts: NoteCounts;
   referencedEventId?: string;
@@ -152,6 +154,8 @@ export function noteFromEvent(event: NostrEvent, author?: Profile): FeedNote {
   const warning = firstTag(event, "content-warning");
   const premiumTag = firstTag(event, "premium");
   const premiumSats = premiumTag ? Number.parseInt(premiumTag, 10) : Number.NaN;
+  const unlockTag = firstTag(event, "premium-unlock");
+  const premiumUnlockSats = unlockTag ? Number.parseInt(unlockTag, 10) : Number.NaN;
   return {
     event,
     id: event.id,
@@ -162,6 +166,8 @@ export function noteFromEvent(event: NostrEvent, author?: Profile): FeedNote {
     contentWarning: warning || undefined,
     premium: premiumTag !== undefined,
     premiumSats: Number.isFinite(premiumSats) && premiumSats > 0 ? premiumSats : undefined,
+    premiumUnlockSats:
+      Number.isFinite(premiumUnlockSats) && premiumUnlockSats > 0 ? premiumUnlockSats : undefined,
     isReply: noteIsReply(event),
     counts: { ...EMPTY_COUNTS },
     referencedEventId: firstTag(event, "e"),

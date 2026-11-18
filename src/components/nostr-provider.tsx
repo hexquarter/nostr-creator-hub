@@ -71,7 +71,8 @@ import {
   type LightningAddressSource,
 } from "@/lib/nostr/lightning";
 import { requestZapInvoice } from "@/lib/nostr/zaps";
-import { syncCreatorBadges } from "@/lib/nostr/badges";
+import { setPurchaseOwner, syncCreatorPurchases } from "@/lib/nostr/badges";
+import { setCreatorPassOwner } from "@/lib/nostr/creator-pass";
 
 export type NostrAuthMethod = "passkey" | "nsec" | "bunker" | "nostr-connect" | "nip07";
 
@@ -206,6 +207,10 @@ export function NostrProvider({ children }: { children: ReactNode }) {
   );
 
   const loadSocialState = useCallback(async (pubkey: string) => {
+    // Purchases are per-account; load this account's cache before the relays
+    // answer so a different account can never inherit someone else's access.
+    setPurchaseOwner(pubkey);
+    setCreatorPassOwner(pubkey);
     try {
       const follows = await fetchFollows(pubkey);
       followsRef.current = follows;
@@ -220,9 +225,9 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     } catch {
       setBookmarks([]);
     }
-    // Badge purchases are signed events, so a membership follows the account
-    // to any device even though the local cache starts empty.
-    void syncCreatorBadges(pubkey).catch(() => undefined);
+    // Membership and single-post purchases are signed events, so they follow
+    // the account to any device even though the local cache starts empty.
+    void syncCreatorPurchases(pubkey).catch(() => undefined);
   }, []);
 
   // Restore a previous session from encrypted local storage.
@@ -488,6 +493,8 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     signerRef.current = null;
     Promise.resolve(signer?.close?.()).catch(() => undefined);
     clearSession();
+    setPurchaseOwner(null);
+    setCreatorPassOwner(null);
     setAccount(null);
     setFollowing([]);
     setBookmarks([]);

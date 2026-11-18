@@ -4,16 +4,22 @@ import { queryEvents } from "./relays";
 import type { FeedNote } from "./social";
 
 /**
- * Creator badges are the only way into members-only content.
+ * Memberships are the only way into members-only content, and readers have two
+ * ways to buy in:
+ *
+ *   - a membership (the creator's "badge"): one payment unlocks every
+ *     members-only post from that creator for 30 days, like a monthly
+ *     subscription that has to be renewed by hand.
+ *   - a single-post unlock: pay once for one members-only post, keep it
+ *     forever.
  *
  * A creator joins the program by publishing a members-only post, which sets
- * the badge price. Readers buy that creator's badge with Lightning and the
- * badge unlocks every members-only post from that creator for 30 days.
+ * the monthly price (and, per post, the single-post price).
  *
- * Purchases are kept on this device and also announced as a signed kind-30078
- * event, so a creator can count members and a reader can restore a badge on
- * another device. Payments go straight to the creator's Lightning address, so
- * Crays never holds the sats.
+ * Purchases are kept on this device and also announced as signed kind-30078
+ * events, so a creator can count members and a reader can restore what they
+ * bought on another device. Payments go straight to the creator's Lightning
+ * address, so Crays never holds the sats.
  */
 export type CreatorBadge = {
   creator: string;
@@ -29,14 +35,21 @@ export const DEFAULT_BADGE_SATS = 5000;
 export const BADGE_ANNOUNCE_KIND = 30078;
 const BADGE_ANNOUNCE_TAG = "crays-badge";
 
-const STORAGE_KEY = "crays.badges.v1";
+const STORAGE_PREFIX = "crays.badges.v2";
+const LEGACY_STORAGE_KEY = "crays.badges.v1";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Purchases belong to the signed-in account, not the device. */
+let owner: string | null = null;
 let cache: CreatorBadge[] | null = null;
 const listeners = new Set<() => void>();
 
 function canUseStorage() {
   return typeof window !== "undefined" && !!window.localStorage;
+}
+
+function storageKey(pubkey: string) {
+  return `${STORAGE_PREFIX}.${pubkey}`;
 }
 
 function isBadge(value: unknown): value is CreatorBadge {
@@ -50,11 +63,9 @@ function isBadge(value: unknown): value is CreatorBadge {
   );
 }
 
-function load(): CreatorBadge[] {
-  if (!canUseStorage()) return [];
+function parseBadges(raw: string | null): CreatorBadge[] {
+  if (!raw) return [];
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter(isBadge) : [];
   } catch {
@@ -62,11 +73,42 @@ function load(): CreatorBadge[] {
   }
 }
 
+function load(pubkey: string): CreatorBadge[] {
+  if (!canUseStorage()) return [];
+  try {
+    const scoped = window.localStorage.getItem(storageKey(pubkey));
+    if (scoped) return parseBadges(scoped);
+    // Move purchases saved before they were scoped to an account.
+    const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!legacy) return [];
+    const badges = parseBadges(legacy);
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    if (badges.length) window.localStorage.setItem(storageKey(pubkey), JSON.stringify(badges));
+    return badges;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Point the store at the signed-in account's purchases. Memberships and
+ * single-post unlocks are per-account, so switching accounts must not leak
+ * them across.
+ */
+export function setPurchaseOwner(pubkey: string | null) {
+  if (owner === pubkey) return;
+  owner = pubkey;
+  cache = pubkey ? load(pubkey) : null;
+  unlockCache = pubkey ? loadUnlocks(pubkey) : null;
+  listeners.forEach((listener) => listener());
+  unlockListeners.forEach((listener) => listener());
+}
+
 function persist(badges: CreatorBadge[]) {
   cache = badges;
-  if (canUseStorage()) {
+  if (owner && canUseStorage()) {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(badges));
+      window.localStorage.setItem(storageKey(owner), JSON.stringify(badges));
     } catch {
       // ignore quota errors
     }
@@ -79,7 +121,7 @@ export function isBadgeActive(badge: CreatorBadge | null | undefined) {
 }
 
 export function getBadges(): CreatorBadge[] {
-  if (!cache) cache = load();
+  if (!cache) cache = owner ? load(owner) : [];
   return cache;
 }
 
@@ -160,46 +202,6 @@ export async function fetchCreatorMembers(creator: string, timeout = 5000): Prom
   return holders.size;
 }
 
-/**
- * Restore badges from the signed announcements this account published, so a
- * membership survives clearing storage or switching devices.
- */
-export async function syncCreatorBadges(pubkey: string): Promise<void> {
-  if (typeof window === "undefined") return;
-  const events = await queryEvents(
-    {
-      kinds: [BADGE_ANNOUNCE_KIND],
-      authors: [pubkey],
-      "#t": [BADGE_ANNOUNCE_TAG],
-      limit: 200,
-    },
-    { timeout: 5000, fresh: true },
-  );
-  const next = [...getBadges()];
-  let changed = false;
-  for (const event of events) {
-    const d = tagValue(event, "d") ?? "";
-    if (!d.startsWith("crays:badge:")) continue;
-    const creator = d.slice("crays:badge:".length);
-    const expiresAt = Number(tagValue(event, "expires")) * 1000;
-    if (!creator || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) continue;
-    const sats = Number(tagValue(event, "amount")) || 0;
-    const index = next.findIndex((badge) => badge.creator === creator);
-    const existing = index >= 0 ? next[index] : null;
-    if (existing && existing.expiresAt >= expiresAt) continue;
-    const badge: CreatorBadge = {
-      creator,
-      sats,
-      purchasedAt: existing?.purchasedAt ?? event.created_at * 1000,
-      expiresAt,
-    };
-    if (index >= 0) next[index] = badge;
-    else next.push(badge);
-    changed = true;
-  }
-  if (changed) persist(next);
-}
-
 /** The badge price is set by the creator's latest members-only post. */
 export function badgePriceFromNotes(notes: FeedNote[]): number | null {
   const premium = notes.filter((note) => note.premium).sort((a, b) => b.createdAt - a.createdAt)[0];
@@ -208,6 +210,191 @@ export function badgePriceFromNotes(notes: FeedNote[]): number | null {
 
 export function daysLeft(badge: CreatorBadge): number {
   return Math.max(0, Math.ceil((badge.expiresAt - Date.now()) / DAY_MS));
+}
+
+// ---------- Single-post unlocks ----------
+
+export type PostUnlock = {
+  postId: string;
+  creator: string;
+  sats: number;
+  purchasedAt: number;
+};
+
+/** One-off purchases never expire: the post stays readable. */
+export const POST_UNLOCK_ANNOUNCE_TAG = "crays-unlock";
+const UNLOCK_STORAGE_PREFIX = "crays.post-unlocks.v2";
+const LEGACY_UNLOCK_STORAGE_KEY = "crays.post-unlocks.v1";
+
+let unlockCache: PostUnlock[] | null = null;
+const unlockListeners = new Set<() => void>();
+
+function isPostUnlock(value: unknown): value is PostUnlock {
+  if (!value || typeof value !== "object") return false;
+  const unlock = value as Partial<PostUnlock>;
+  return (
+    typeof unlock.postId === "string" &&
+    typeof unlock.creator === "string" &&
+    typeof unlock.sats === "number" &&
+    typeof unlock.purchasedAt === "number"
+  );
+}
+
+function parseUnlocks(raw: string | null): PostUnlock[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(isPostUnlock) : [];
+  } catch {
+    return [];
+  }
+}
+
+function unlockStorageKey(pubkey: string) {
+  return `${UNLOCK_STORAGE_PREFIX}.${pubkey}`;
+}
+
+function loadUnlocks(pubkey: string): PostUnlock[] {
+  if (!canUseStorage()) return [];
+  try {
+    const scoped = window.localStorage.getItem(unlockStorageKey(pubkey));
+    if (scoped) return parseUnlocks(scoped);
+    const legacy = window.localStorage.getItem(LEGACY_UNLOCK_STORAGE_KEY);
+    if (!legacy) return [];
+    const unlocks = parseUnlocks(legacy);
+    window.localStorage.removeItem(LEGACY_UNLOCK_STORAGE_KEY);
+    if (unlocks.length) {
+      window.localStorage.setItem(unlockStorageKey(pubkey), JSON.stringify(unlocks));
+    }
+    return unlocks;
+  } catch {
+    return [];
+  }
+}
+
+function persistUnlocks(unlocks: PostUnlock[]) {
+  unlockCache = unlocks;
+  if (owner && canUseStorage()) {
+    try {
+      window.localStorage.setItem(unlockStorageKey(owner), JSON.stringify(unlocks));
+    } catch {
+      // ignore quota errors
+    }
+  }
+  unlockListeners.forEach((listener) => listener());
+}
+
+export function getPostUnlocks(): PostUnlock[] {
+  if (!unlockCache) unlockCache = owner ? loadUnlocks(owner) : [];
+  return unlockCache;
+}
+
+export function hasUnlockedPost(postId: string | undefined): boolean {
+  if (!postId) return false;
+  return getPostUnlocks().some((unlock) => unlock.postId === postId);
+}
+
+export function grantPostUnlock(input: {
+  postId: string;
+  creator: string;
+  sats: number;
+}): PostUnlock {
+  const unlock: PostUnlock = {
+    postId: input.postId,
+    creator: input.creator,
+    sats: input.sats,
+    purchasedAt: Date.now(),
+  };
+  persistUnlocks([...getPostUnlocks().filter((item) => item.postId !== input.postId), unlock]);
+  return unlock;
+}
+
+export function postUnlockAnnouncementDTag(postId: string) {
+  return `crays:unlock:${postId}`;
+}
+
+/** Signed proof of a single-post purchase, so it can be restored elsewhere. */
+export async function announcePostUnlock(input: {
+  postId: string;
+  creator: string;
+  sats: number;
+  signAndPublish: (template: EventTemplate) => Promise<NostrEvent>;
+}): Promise<void> {
+  await input.signAndPublish({
+    kind: BADGE_ANNOUNCE_KIND,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["d", postUnlockAnnouncementDTag(input.postId)],
+      ["p", input.creator],
+      ["t", POST_UNLOCK_ANNOUNCE_TAG],
+      ["e", input.postId],
+      ["amount", String(input.sats)],
+    ],
+    content: "",
+  });
+}
+
+/**
+ * Restore memberships and single-post unlocks from the announcements this
+ * account published, so purchases survive clearing storage or a new device.
+ */
+export async function syncCreatorPurchases(pubkey: string): Promise<void> {
+  if (typeof window === "undefined") return;
+  setPurchaseOwner(pubkey);
+  const events = await queryEvents(
+    {
+      kinds: [BADGE_ANNOUNCE_KIND],
+      authors: [pubkey],
+      "#t": [BADGE_ANNOUNCE_TAG, POST_UNLOCK_ANNOUNCE_TAG],
+      limit: 500,
+    },
+    { timeout: 5000, fresh: true },
+  );
+
+  const nextBadges = [...getBadges()];
+  const nextUnlocks = [...getPostUnlocks()];
+  let badgesChanged = false;
+  let unlocksChanged = false;
+
+  for (const event of events) {
+    const d = tagValue(event, "d") ?? "";
+
+    if (d.startsWith("crays:unlock:")) {
+      const postId = d.slice("crays:unlock:".length);
+      const creator = tagValue(event, "p") ?? "";
+      if (!postId || !creator) continue;
+      if (nextUnlocks.some((unlock) => unlock.postId === postId)) continue;
+      nextUnlocks.push({
+        postId,
+        creator,
+        sats: Number(tagValue(event, "amount")) || 0,
+        purchasedAt: event.created_at * 1000,
+      });
+      unlocksChanged = true;
+      continue;
+    }
+
+    if (!d.startsWith("crays:badge:")) continue;
+    const creator = d.slice("crays:badge:".length);
+    const expiresAt = Number(tagValue(event, "expires")) * 1000;
+    if (!creator || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) continue;
+    const sats = Number(tagValue(event, "amount")) || 0;
+    const index = nextBadges.findIndex((badge) => badge.creator === creator);
+    const existing = index >= 0 ? nextBadges[index] : null;
+    if (existing && existing.expiresAt >= expiresAt) continue;
+    const badge: CreatorBadge = {
+      creator,
+      sats,
+      purchasedAt: existing?.purchasedAt ?? event.created_at * 1000,
+      expiresAt,
+    };
+    if (index >= 0) nextBadges[index] = badge;
+    else nextBadges.push(badge);
+    badgesChanged = true;
+  }
+
+  if (badgesChanged) persist(nextBadges);
+  if (unlocksChanged) persistUnlocks(nextUnlocks);
 }
 
 // Must be a stable reference: a fresh [] on every render trips React's
@@ -223,5 +410,19 @@ export function useCreatorBadges(): CreatorBadge[] {
     },
     getBadges,
     getServerSnapshot,
+  );
+}
+
+const EMPTY_UNLOCKS: PostUnlock[] = [];
+const getUnlockServerSnapshot = (): PostUnlock[] => EMPTY_UNLOCKS;
+
+export function usePostUnlocks(): PostUnlock[] {
+  return useSyncExternalStore(
+    (listener) => {
+      unlockListeners.add(listener);
+      return () => unlockListeners.delete(listener);
+    },
+    getPostUnlocks,
+    getUnlockServerSnapshot,
   );
 }

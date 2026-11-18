@@ -25,22 +25,27 @@ import {
   BADGE_DAYS,
   DEFAULT_BADGE_SATS,
   announceCreatorBadge,
+  announcePostUnlock,
   daysLeft,
   fetchCreatorMembers,
   grantCreatorBadge,
+  grantPostUnlock,
   isBadgeActive,
   useCreatorBadges,
+  usePostUnlocks,
 } from "@/lib/nostr/badges";
 import { lightningAddressFor } from "@/lib/nostr/lightning";
 import {
+  CREATOR_PASS_ADDRESS,
   CREATOR_PASS_DAYS,
+  CREATOR_PASS_USD,
   activateCreatorPass,
   creatorPassDaysLeft,
   isCreatorPassActive,
   useCreatorPass,
 } from "@/lib/nostr/creator-pass";
 import { hasPasskey, hasWebAuthn } from "@/lib/nostr/passkey";
-import { useBtcPrice, satsToUsd, formatUsd } from "@/lib/nostr/price";
+import { useBtcPrice, satsToUsd, usdToSats, formatUsd } from "@/lib/nostr/price";
 import { requestPaymentInvoice, isLightningInvoice } from "@/lib/nostr/zaps";
 import {
   fetchInstagramPost,
@@ -141,7 +146,16 @@ type ZapOptions = {
   profile?: Profile;
   note?: NostrEvent;
 };
-type BadgeOptions = { creator?: string; name?: string; sats?: number };
+type BadgeOptions = {
+  creator?: string;
+  name?: string;
+  /** Monthly membership price, in sats per 30 days. */
+  sats?: number;
+  /** Set when the reader opened this from one specific members-only post. */
+  postId?: string;
+  postSats?: number;
+  mode?: "subscribe" | "post";
+};
 type ShareOptions = { url?: string; title?: string };
 type ComposeOptions = {
   mode?: "post" | "article" | "poll" | "reply";
@@ -612,6 +626,7 @@ function ComposeModal({
   options: ComposeOptions;
 }) {
   const nostr = useNostr();
+  const ui = useUI();
   const creatorPass = useCreatorPass();
   const canPublishPremium = isCreatorPassActive(creatorPass);
   const [tab, setTab] = useState<"post" | "article" | "poll">(
@@ -622,6 +637,7 @@ function ComposeModal({
   const [pollOptions, setPollOptions] = useState(["", "", ""]);
   const [premium, setPremium] = useState(false);
   const [price, setPrice] = useState(500);
+  const [unlockPrice, setUnlockPrice] = useState(200);
   const [sensitive, setSensitive] = useState(false);
   const [reason, setReason] = useState<SensitiveReason>("Nudity");
   const [warning, setWarning] = useState("");
@@ -635,6 +651,7 @@ function ComposeModal({
       setPollOptions(["", "", ""]);
       setPremium(false);
       setPrice(500);
+      setUnlockPrice(200);
       setSensitive(false);
       setReason("Nudity");
       setWarning("");
@@ -652,7 +669,10 @@ function ComposeModal({
       const tags: string[][] = [];
       // Selling memberships is a Crays creator-badge feature; never tag a post
       // as members-only without it.
-      if (premium && canPublishPremium) tags.push(["premium", String(price)]);
+      if (premium && canPublishPremium) {
+        tags.push(["premium", String(price)]);
+        tags.push(["premium-unlock", String(unlockPrice)]);
+      }
       if (tab === "article") {
         const d = title.trim()
           ? title
@@ -778,7 +798,7 @@ function ComposeModal({
                   title="Members only"
                   hint={
                     premium
-                      ? `Your creator badge unlocks this and every members-only post (${price.toLocaleString()} sats / ${BADGE_DAYS} days).`
+                      ? `Members pay ${price.toLocaleString()} sats / ${BADGE_DAYS} days; anyone can also unlock just this post for ${unlockPrice.toLocaleString()} sats.`
                       : "Free for everyone."
                   }
                   tone="amber"
@@ -786,24 +806,46 @@ function ComposeModal({
                   onToggle={() => setPremium((v) => !v)}
                 />
                 {premium && (
-                  <div className="rounded-xl bg-amber-50/60 p-2 ring-1 ring-amber-100">
-                    <p className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
-                      Badge price
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[500, 2000, 5000].map((p) => (
-                        <button
-                          key={p}
-                          onClick={() => setPrice(p)}
-                          className={`rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors ${
-                            price === p
-                              ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200"
-                              : "text-amber-800/70"
-                          }`}
-                        >
-                          {p.toLocaleString()} sats
-                        </button>
-                      ))}
+                  <div className="space-y-2 rounded-xl bg-amber-50/60 p-2.5 ring-1 ring-amber-100">
+                    <div>
+                      <p className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+                        Membership · {BADGE_DAYS} days
+                      </p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[500, 2000, 5000].map((p) => (
+                          <button
+                            key={p}
+                            onClick={() => setPrice(p)}
+                            className={`rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors ${
+                              price === p
+                                ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200"
+                                : "text-amber-800/70"
+                            }`}
+                          >
+                            {p.toLocaleString()} sats
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+                        Single-post unlock
+                      </p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[50, 200, 500].map((p) => (
+                          <button
+                            key={p}
+                            onClick={() => setUnlockPrice(p)}
+                            className={`rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors ${
+                              unlockPrice === p
+                                ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200"
+                                : "text-amber-800/70"
+                            }`}
+                          >
+                            {p.toLocaleString()} sats
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -814,13 +856,13 @@ function ComposeModal({
                   <Lock className="size-3.5" /> Members-only posts need the Crays badge
                 </p>
                 <p className="mt-1 text-[11.5px] leading-relaxed text-amber-800/80">
-                  The Crays creator badge lets you sell memberships with Lightning. It’s free while
-                  Crays is in beta.
+                  The Crays badge is {formatUsd(CREATOR_PASS_USD)} / month and lets you sell
+                  memberships and single-post unlocks with Lightning.
                 </p>
                 <button
                   onClick={() => {
-                    activateCreatorPass();
-                    toast.success("Crays creator badge active — you can post members-only content");
+                    onClose();
+                    ui.openUpgrade();
                   }}
                   className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-3 py-1.5 text-[11.5px] font-semibold text-white transition-colors hover:bg-amber-600"
                 >
@@ -898,8 +940,9 @@ function BadgeModal({
   options: BadgeOptions;
 }) {
   const nostr = useNostr();
-  const price = useBtcPrice();
+  const btc = useBtcPrice();
   const badges = useCreatorBadges();
+  const unlocks = usePostUnlocks();
   const [creatorProfile, setCreatorProfile] = useState<Profile | null>(null);
   const [members, setMembers] = useState<number | null>(null);
   const [nwcUri, setNwcUri] = useState("");
@@ -909,12 +952,20 @@ function BadgeModal({
   const [creatingInvoice, setCreatingInvoice] = useState(false);
 
   const creator = options.creator;
-  const sats = options.sats ?? DEFAULT_BADGE_SATS;
+  const subscriptionSats = options.sats ?? DEFAULT_BADGE_SATS;
+  const postSats = options.postSats ?? Math.max(21, Math.round(subscriptionSats / 10));
   const name = options.name ?? "this creator";
   const owned = creator
     ? badges.find((badge) => badge.creator === creator && isBadgeActive(badge))
     : undefined;
-  const usd = satsToUsd(sats, price);
+  const unlocked = options.postId ? unlocks.some((item) => item.postId === options.postId) : false;
+  // Readers can buy the membership or, from a post, just that post.
+  const [mode, setMode] = useState<"subscribe" | "post">(
+    options.mode ?? (options.postId ? "post" : "subscribe"),
+  );
+  const buyingPost = mode === "post" && Boolean(options.postId);
+  const sats = buyingPost ? postSats : subscriptionSats;
+  const usd = satsToUsd(sats, btc);
 
   useEffect(() => {
     if (!open) return;
@@ -923,7 +974,8 @@ function BadgeModal({
     setPaying(false);
     setInvoice("");
     setCreatingInvoice(false);
-  }, [open]);
+    setMode(options.mode ?? (options.postId ? "post" : "subscribe"));
+  }, [open, options.mode, options.postId]);
 
   useEffect(() => {
     if (!open || !creator) {
@@ -960,18 +1012,31 @@ function BadgeModal({
     }
   };
 
-  const grantBadge = () => {
+  const grantPurchase = () => {
     if (!creator) return;
+    if (buyingPost && options.postId) {
+      grantPostUnlock({ postId: options.postId, creator, sats });
+      // Signed proof of the purchase, so it can be restored on another device.
+      void announcePostUnlock({
+        postId: options.postId,
+        creator,
+        sats,
+        signAndPublish: nostr.signAndPublish,
+      }).catch(() => undefined);
+      toast.success("Post unlocked — it stays in your library");
+      onClose();
+      return;
+    }
     const badge = grantCreatorBadge(creator, sats);
     // Signed proof of the purchase: lets the creator count members and lets
-    // this reader restore the badge on another device.
+    // this reader restore the membership on another device.
     void announceCreatorBadge({
       creator,
       sats,
       expiresAt: badge.expiresAt,
       signAndPublish: nostr.signAndPublish,
     }).catch(() => undefined);
-    toast.success(`Creator badge active — ${daysLeft(badge)} days of members-only posts`);
+    toast.success(`Membership active — ${daysLeft(badge)} days of members-only posts`);
     onClose();
   };
 
@@ -990,7 +1055,7 @@ function BadgeModal({
       const address = lightningAddressFor(creator, profile);
       const nextInvoice = await requestPaymentInvoice(address, sats);
       await nostr.payInvoice(nextInvoice);
-      grantBadge();
+      grantPurchase();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Couldn't buy that badge.");
     } finally {
@@ -1017,7 +1082,7 @@ function BadgeModal({
 
   const primary = async () => {
     if (invoice) {
-      grantBadge();
+      grantPurchase();
       return;
     }
     if (nostr.wallet.connected) {
@@ -1033,32 +1098,69 @@ function BadgeModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Crown className="size-5 text-amber-500" />
-            {owned ? "Creator badge active" : `${name}’s creator badge`}
+            {owned
+              ? "Membership active"
+              : unlocked && buyingPost
+                ? "Post unlocked"
+                : buyingPost
+                  ? "Unlock this post"
+                  : `${name}’s membership`}
           </DialogTitle>
           <DialogDescription>
             {owned
-              ? `Your badge unlocks every members-only post from ${name}.`
-              : `One badge unlocks every members-only post from ${name}.`}
+              ? `Your membership unlocks every members-only post from ${name}.`
+              : buyingPost
+                ? `Pay once for this post, or join ${name}’s membership to read everything.`
+                : `One payment unlocks every members-only post from ${name} for ${BADGE_DAYS} days.`}
           </DialogDescription>
         </DialogHeader>
 
-        {owned ? (
+        {owned || (unlocked && buyingPost) ? (
           <div className="rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 p-5 text-center ring-1 ring-emerald-100">
             <p className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-emerald-700">
-              <Check className="size-3.5" /> Active · {daysLeft(owned)} days left
+              <Check className="size-3.5" />{" "}
+              {owned ? `Active · ${daysLeft(owned)} days left` : "Unlocked"}
             </p>
             <p className="mt-1 text-[15px] font-semibold text-zinc-900">
-              You’re a member of {name}’s badge program
+              {owned ? `You’re a member of ${name}’s membership` : "You already unlocked this post"}
             </p>
             <p className="mt-1 text-[11.5px] text-zinc-500">
-              Paid {owned.sats.toLocaleString()} sats · no auto-renew
+              {owned
+                ? `Paid ${owned.sats.toLocaleString()} sats · no auto-renew`
+                : "One-time purchase · it stays in your library"}
             </p>
           </div>
         ) : (
           <>
+            {options.postId && (
+              <div className="grid grid-cols-2 gap-1 rounded-xl bg-zinc-100 p-1 text-[12px] font-semibold">
+                <button
+                  onClick={() => {
+                    setMode("post");
+                    setInvoice("");
+                  }}
+                  className={`rounded-lg px-3 py-1.5 transition-colors ${
+                    buyingPost ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500"
+                  }`}
+                >
+                  This post · {postSats.toLocaleString()} sats
+                </button>
+                <button
+                  onClick={() => {
+                    setMode("subscribe");
+                    setInvoice("");
+                  }}
+                  className={`rounded-lg px-3 py-1.5 transition-colors ${
+                    buyingPost ? "text-zinc-500" : "bg-white text-zinc-900 shadow-sm"
+                  }`}
+                >
+                  Membership · {subscriptionSats.toLocaleString()} sats
+                </button>
+              </div>
+            )}
             <div className="rounded-xl bg-gradient-to-br from-amber-50 to-orange-50 p-5 text-center ring-1 ring-amber-100">
               <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">
-                Creator badge · {BADGE_DAYS} days
+                {buyingPost ? "Single post · forever" : `Membership · ${BADGE_DAYS} days`}
               </p>
               <p className="mt-1 text-[32px] font-bold tracking-tight text-zinc-900">
                 {sats.toLocaleString()} sats
@@ -1066,25 +1168,42 @@ function BadgeModal({
               <p className="text-[11.5px] text-zinc-500">
                 {usd != null ? `≈ ${formatUsd(usd)} · ` : ""}paid directly to {name} over Lightning
               </p>
-              {members != null && members > 0 && (
+              {!buyingPost && members != null && members > 0 && (
                 <p className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-white/70 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800">
                   <Users className="size-3" /> {members} member{members === 1 ? "" : "s"} already in
                 </p>
               )}
             </div>
             <ul className="space-y-1.5 text-[12.5px] text-zinc-600">
-              <li className="flex gap-2">
-                <Check className="size-4 shrink-0 text-emerald-500" /> Every members-only post from{" "}
-                {name}
-              </li>
-              <li className="flex gap-2">
-                <Check className="size-4 shrink-0 text-emerald-500" /> Full text, images and
-                long-form articles
-              </li>
-              <li className="flex gap-2">
-                <Check className="size-4 shrink-0 text-emerald-500" /> No auto-renew — buy again
-                only if you want
-              </li>
+              {buyingPost ? (
+                <>
+                  <li className="flex gap-2">
+                    <Check className="size-4 shrink-0 text-emerald-500" /> This post, unlocked for
+                    good
+                  </li>
+                  <li className="flex gap-2">
+                    <Check className="size-4 shrink-0 text-emerald-500" /> Full text and images
+                  </li>
+                  <li className="flex gap-2">
+                    <Check className="size-4 shrink-0 text-emerald-500" /> No membership needed
+                  </li>
+                </>
+              ) : (
+                <>
+                  <li className="flex gap-2">
+                    <Check className="size-4 shrink-0 text-emerald-500" /> Every members-only post
+                    from {name}
+                  </li>
+                  <li className="flex gap-2">
+                    <Check className="size-4 shrink-0 text-emerald-500" /> Full text, images and
+                    long-form articles
+                  </li>
+                  <li className="flex gap-2">
+                    <Check className="size-4 shrink-0 text-emerald-500" /> No auto-renew — buy again
+                    only if you want
+                  </li>
+                </>
+              )}
             </ul>
 
             {invoice ? (
@@ -1151,7 +1270,7 @@ function BadgeModal({
         )}
 
         <DialogFooter>
-          {owned ? (
+          {owned || (unlocked && buyingPost) ? (
             <PrimaryBtn className="w-full" onClick={onClose}>
               Start reading
             </PrimaryBtn>
@@ -1177,7 +1296,7 @@ function BadgeModal({
                     : invoice
                       ? "I’ve paid — unlock"
                       : nostr.wallet.connected
-                        ? `Pay ${sats.toLocaleString()} sats`
+                        ? `${buyingPost ? "Unlock" : "Subscribe"} · ${sats.toLocaleString()} sats`
                         : "Pay with Lightning"}
               </PrimaryBtn>
             </>
@@ -1241,21 +1360,68 @@ function ShareModal({
 }
 
 // ---------- Upgrade ----------
+/** Fallback price when the live BTC rate has not loaded yet (~$50 at $100k/BTC). */
+const CREATOR_PASS_FALLBACK_SATS = 500_000;
+
 function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ui = useUI();
+  const nostr = useNostr();
   const pass = useCreatorPass();
+  const btc = useBtcPrice();
   const active = isCreatorPassActive(pass);
+  const sats = usdToSats(CREATOR_PASS_USD, btc) ?? CREATOR_PASS_FALLBACK_SATS;
+  const [invoice, setInvoice] = useState("");
+  const [manual, setManual] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [paying, setPaying] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setInvoice("");
+      setManual(false);
+      setBusy(false);
+      setPaying(false);
+    }
+  }, [open]);
+
+  const pay = async () => {
+    setBusy(true);
+    try {
+      if (nostr.wallet.connected) {
+        const next = await requestPaymentInvoice(CREATOR_PASS_ADDRESS, sats);
+        await nostr.payInvoice(next);
+        activateCreatorPass(sats);
+        toast.success("Crays premium active — you can sell memberships for 30 days");
+        onClose();
+        return;
+      }
+      setInvoice(await requestPaymentInvoice(CREATOR_PASS_ADDRESS, sats));
+    } catch {
+      // Some Lightning addresses can't issue invoices from the browser. Fall
+      // back to paying the address directly from any wallet.
+      setManual(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmPaid = () => {
+    activateCreatorPass(sats);
+    toast.success("Crays premium active — you can sell memberships for 30 days");
+    onClose();
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Crown className="size-5 text-amber-500" />
-            Crays creator badge
+            Crays premium
           </DialogTitle>
           <DialogDescription>
-            The badge that lets you sell memberships. No platform cut — readers pay you directly
-            over Lightning.
+            The monthly badge that lets you sell memberships and get paid by fans. No platform cut —
+            readers pay you directly over Lightning.
           </DialogDescription>
         </DialogHeader>
         <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50 p-5 text-center ring-1 ring-amber-100">
@@ -1267,16 +1433,22 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
               <p className="mt-1 text-[15px] font-semibold text-zinc-900">
                 You can publish members-only posts
               </p>
-              <p className="mt-1 text-[11.5px] text-zinc-500">Free while Crays is in beta</p>
+              <p className="mt-1 text-[11.5px] text-zinc-500">
+                {formatUsd(CREATOR_PASS_USD)} / month · renew anytime to add {CREATOR_PASS_DAYS}{" "}
+                days
+              </p>
             </>
           ) : (
             <>
               <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">
-                Creator badge · {CREATOR_PASS_DAYS} days
+                Crays premium · {CREATOR_PASS_DAYS} days
               </p>
-              <p className="mt-1 text-[28px] font-bold tracking-tight text-zinc-900">Free</p>
+              <p className="mt-1 text-[28px] font-bold tracking-tight text-zinc-900">
+                {formatUsd(CREATOR_PASS_USD)}
+                <span className="text-[14px] font-semibold text-zinc-500"> / month</span>
+              </p>
               <p className="text-[11.5px] text-zinc-500">
-                While Crays is in beta · no card, no subscription
+                ≈ {sats.toLocaleString()} sats at the live BTC rate · paid in sats over Lightning
               </p>
             </>
           )}
@@ -1284,17 +1456,75 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
         <ul className="space-y-1.5 text-[12.5px] text-zinc-700">
           {[
             "Publish members-only posts and articles",
-            "Set your badge price — readers pay you over Lightning",
+            "Sell monthly memberships and single-post unlocks",
+            "Set your prices — fans pay you over Lightning",
             "See members and members-only posts in your dashboard",
             "Passkey sign-in — no seed phrase to remember",
             "Receive zaps straight to your Lightning wallet",
-            "Import your Instagram posts in a few clicks",
           ].map((f) => (
             <li key={f} className="flex gap-2">
               <Check className="size-4 shrink-0 text-emerald-500" /> {f}
             </li>
           ))}
         </ul>
+        {!active && invoice && (
+          <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
+            <p className="text-[12px] font-semibold text-zinc-900">
+              Scan or open in your Lightning wallet
+            </p>
+            <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm">
+              <QRCodeSVG value={invoice.toUpperCase()} size={136} level="M" />
+            </div>
+            <p className="mt-2 text-[12px] font-semibold text-zinc-900">
+              {sats.toLocaleString()} sats · {formatUsd(CREATOR_PASS_USD)}
+            </p>
+            <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
+              <a href={`lightning:${invoice}`} className="text-brand hover:underline">
+                Open wallet
+              </a>
+              <button
+                onClick={() => {
+                  void navigator.clipboard.writeText(invoice);
+                  toast.success("Invoice copied");
+                }}
+                className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
+              >
+                <Copy className="size-3" /> Copy invoice
+              </button>
+            </div>
+            <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
+              After your wallet confirms the payment, tap “I’ve paid” to activate the badge.
+            </p>
+          </div>
+        )}
+        {!active && !invoice && manual && (
+          <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
+            <p className="text-[12px] font-semibold text-zinc-900">
+              Send {sats.toLocaleString()} sats over Lightning
+            </p>
+            <p className="mt-1 text-[11.5px] text-zinc-500">
+              {formatUsd(CREATOR_PASS_USD)} for {CREATOR_PASS_DAYS} days of Crays premium
+            </p>
+            <p className="mt-2 break-all rounded-lg bg-white px-2 py-1.5 font-mono text-[11.5px] text-zinc-800 ring-1 ring-zinc-100">
+              {CREATOR_PASS_ADDRESS}
+            </p>
+            <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
+              <button
+                onClick={() => {
+                  void navigator.clipboard.writeText(CREATOR_PASS_ADDRESS);
+                  toast.success("Lightning address copied");
+                }}
+                className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
+              >
+                <Copy className="size-3" /> Copy address
+              </button>
+            </div>
+            <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
+              Send the amount to this address from any Lightning wallet, then tap “I’ve paid” to
+              activate the badge.
+            </p>
+          </div>
+        )}
         <DialogFooter className="gap-2 sm:justify-between">
           <GhostBtn onClick={onClose}>Close</GhostBtn>
           <div className="flex gap-2">
@@ -1315,16 +1545,29 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
               >
                 Write a post
               </PrimaryBtn>
+            ) : invoice || manual ? (
+              <PrimaryBtn
+                className="!bg-amber-500 hover:!bg-amber-600"
+                disabled={paying}
+                onClick={() => {
+                  setPaying(true);
+                  confirmPaid();
+                }}
+              >
+                <Check className="size-4" /> I’ve paid — activate
+              </PrimaryBtn>
             ) : (
               <PrimaryBtn
                 className="!bg-amber-500 hover:!bg-amber-600"
-                onClick={() => {
-                  activateCreatorPass();
-                  toast.success("Crays creator badge active — members-only posts unlocked");
-                  onClose();
-                }}
+                disabled={busy}
+                onClick={() => void pay()}
               >
-                <Crown className="size-4" /> Activate badge
+                {busy ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}
+                {busy
+                  ? "Opening…"
+                  : nostr.wallet.connected
+                    ? `Pay ${sats.toLocaleString()} sats`
+                    : "Pay with Lightning"}
               </PrimaryBtn>
             )}
           </div>

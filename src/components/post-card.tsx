@@ -27,6 +27,7 @@ import { shortNpub } from "@/lib/nostr/profiles";
 import {
   isBadgeActive,
   useCreatorBadges,
+  usePostUnlocks,
   DEFAULT_BADGE_SATS,
   BADGE_DAYS,
 } from "@/lib/nostr/badges";
@@ -46,6 +47,7 @@ export type Post = {
   verified?: boolean;
   premium?: boolean;
   premiumSats?: number;
+  premiumUnlockSats?: number;
   time: string;
   content: string;
   avatar?: string;
@@ -75,6 +77,7 @@ export function postFromNote(note: FeedNote): Post {
     image: images[0] ? { url: images[0] } : undefined,
     premium: note.premium,
     premiumSats: note.premiumSats,
+    premiumUnlockSats: note.premiumUnlockSats,
     sensitive: note.contentWarning
       ? { reason: note.contentWarning, note: note.contentWarning }
       : undefined,
@@ -108,14 +111,17 @@ export function PostCard({ post }: { post: Post }) {
   );
   const isReal = Boolean(post.event && post.authorPubkey);
   const badges = useCreatorBadges();
+  const unlocks = usePostUnlocks();
   const badge = post.authorPubkey
     ? badges.find((item) => item.creator === post.authorPubkey && isBadgeActive(item))
     : undefined;
   const isAuthor = Boolean(post.authorPubkey && nostr.account?.pubkey === post.authorPubkey);
-  // Members-only posts are readable only by the author or by holders of that
-  // creator's badge — there is no per-post unlock.
-  const locked = Boolean(post.premium && !isAuthor && !badge);
+  // Members-only posts are readable by the author, by members of that creator's
+  // program, or by anyone who paid for this one post.
+  const unlockedPost = unlocks.some((item) => item.postId === post.id);
+  const locked = Boolean(post.premium && !isAuthor && !badge && !unlockedPost);
   const badgeSats = post.premiumSats ?? DEFAULT_BADGE_SATS;
+  const unlockSats = post.premiumUnlockSats ?? Math.max(21, Math.round(badgeSats / 10));
 
   const shareUrl = post.event
     ? `https://njump.me/${nip19.neventEncode({ id: post.event.id, author: post.event.pubkey })}`
@@ -222,10 +228,13 @@ export function PostCard({ post }: { post: Post }) {
                     creator: post.authorPubkey,
                     name: post.author,
                     sats: badgeSats,
+                    postId: post.id,
+                    postSats: unlockSats,
+                    mode: "post",
                   })
                 }
               >
-                <Crown className="size-4 text-amber-600" /> Get creator badge
+                <Crown className="size-4 text-amber-600" /> Unlock this post
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onClick={() => void toggleFollow()}>
@@ -272,23 +281,43 @@ export function PostCard({ post }: { post: Post }) {
             </span>
             <p className="text-[13.5px] font-semibold text-zinc-900">This post is hidden</p>
             <p className="max-w-xs text-[11.5px] leading-relaxed text-zinc-500">
-              Unlock every members-only post from {post.author} with one Lightning payment. No
-              subscription, no auto-renew.
+              Pay for this post once, or join {post.author}’s membership to read everything they
+              publish for members.
             </p>
-            <button
-              onClick={() =>
-                ui.openBadge({
-                  creator: post.authorPubkey,
-                  name: post.author,
-                  sats: badgeSats,
-                })
-              }
-              className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2 text-[12px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
-            >
-              <Zap className="size-3.5" /> Unlock with Lightning · {compactNumber(badgeSats)} sats
-            </button>
+            <div className="mt-1 flex flex-col items-center gap-2 sm:flex-row">
+              <button
+                onClick={() =>
+                  ui.openBadge({
+                    creator: post.authorPubkey,
+                    name: post.author,
+                    sats: badgeSats,
+                    postId: post.id,
+                    postSats: unlockSats,
+                    mode: "post",
+                  })
+                }
+                className="inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2 text-[12px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
+              >
+                <Zap className="size-3.5" /> Unlock this post · {compactNumber(unlockSats)} sats
+              </button>
+              <button
+                onClick={() =>
+                  ui.openBadge({
+                    creator: post.authorPubkey,
+                    name: post.author,
+                    sats: badgeSats,
+                    postId: post.id,
+                    postSats: unlockSats,
+                    mode: "subscribe",
+                  })
+                }
+                className="inline-flex items-center gap-1.5 rounded-full bg-white/80 px-4 py-2 text-[12px] font-semibold text-amber-800 ring-1 ring-amber-200 transition-colors hover:bg-white"
+              >
+                <Crown className="size-3.5" /> or subscribe · {compactNumber(badgeSats)} sats / mo
+              </button>
+            </div>
             <p className="text-[10.5px] text-zinc-400">
-              {BADGE_DAYS} days of access · paid directly to {post.author}
+              {BADGE_DAYS} days of access with a membership · paid directly to {post.author}
             </p>
           </div>
         </div>

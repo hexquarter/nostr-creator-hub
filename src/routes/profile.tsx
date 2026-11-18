@@ -15,13 +15,15 @@ import {
 import { compactNumber } from "@/lib/format";
 import {
   BADGE_DAYS,
+  DEFAULT_BADGE_SATS,
   badgePriceFromNotes,
   daysLeft,
   fetchCreatorMembers,
   isBadgeActive,
   useCreatorBadges,
 } from "@/lib/nostr/badges";
-import { activateCreatorPass, isCreatorPassActive, useCreatorPass } from "@/lib/nostr/creator-pass";
+import { CREATOR_PASS_USD, isCreatorPassActive, useCreatorPass } from "@/lib/nostr/creator-pass";
+import { formatUsd } from "@/lib/nostr/price";
 import {
   BadgeCheck,
   Calendar,
@@ -210,6 +212,15 @@ function Profile() {
   const zapsEarned = notes.reduce((sum, note) => sum + note.counts.zapSats, 0);
   const following = nostr.isFollowing(pubkey);
   const badgePrice = badgePriceFromNotes(notes);
+  const latestPremium = notes
+    .filter((note) => note.premium)
+    .sort((a, b) => b.createdAt - a.createdAt)[0];
+  // Posts published without an explicit per-post price fall back to a tenth of
+  // the monthly price, matching what the locked card shows.
+  const unlockPrice = latestPremium
+    ? (latestPremium.premiumUnlockSats ??
+      Math.max(21, Math.round((badgePrice ?? DEFAULT_BADGE_SATS) / 10)))
+    : null;
   const ownedBadge = badges.find((badge) => badge.creator === pubkey && isBadgeActive(badge));
   const premiumCount = notes.filter((note) => note.premium).length;
   const hasCreatorPass = isCreatorPassActive(creatorPass);
@@ -269,13 +280,13 @@ function Profile() {
                 >
                   <Crown className="size-3.5" />
                   {ownedBadge
-                    ? `Badge · ${daysLeft(ownedBadge)}d left`
-                    : `Badge · ${compactNumber(badgePrice)} sats`}
+                    ? `Member · ${daysLeft(ownedBadge)}d left`
+                    : `Join · ${compactNumber(badgePrice)} sats`}
                 </button>
               )}
               {isOwn && badgePrice != null && (
                 <span className="col-span-2 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 ring-1 ring-amber-100 sm:col-auto">
-                  <Crown className="size-3.5" /> Badge · {compactNumber(badgePrice)} sats
+                  <Crown className="size-3.5" /> Membership · {compactNumber(badgePrice)} sats
                 </span>
               )}
               <button
@@ -398,8 +409,8 @@ function Profile() {
               </p>
               <p className="mt-1 max-w-xl text-[12.5px] leading-relaxed text-zinc-500">
                 {hasBadgeProgram
-                  ? `One badge unlocks every members-only post from ${name} for ${BADGE_DAYS} days. Readers pay ${name} directly over Lightning.`
-                  : "Publish a members-only post to start your badge program. Readers buy one badge and unlock everything you mark members-only."}
+                  ? `A membership unlocks every members-only post from ${name} for ${BADGE_DAYS} days, or readers can unlock one post at a time. ${name} is paid directly over Lightning.`
+                  : "Publish a members-only post to start your membership. Fans can subscribe monthly or unlock a single post."}
               </p>
             </div>
 
@@ -408,7 +419,7 @@ function Profile() {
                 onClick={() => ui.openBadge({ creator: pubkey, name, sats: badgePrice })}
                 className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600 sm:w-auto"
               >
-                <Crown className="size-4" /> Get badge · {compactNumber(badgePrice)} sats
+                <Crown className="size-4" /> Join · {compactNumber(badgePrice)} sats / mo
               </button>
             )}
             {!isOwn && ownedBadge && (
@@ -428,23 +439,27 @@ function Profile() {
               <button
                 onClick={() => {
                   if (!hasCreatorPass) {
-                    activateCreatorPass();
-                    toast.success("Crays creator badge active — members-only posts unlocked");
+                    ui.openUpgrade();
+                    return;
                   }
                   ui.openCompose({ mode: "post" });
                 }}
                 className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600 sm:w-auto"
               >
                 {hasCreatorPass ? <Crown className="size-4" /> : <Lock className="size-4" />}
-                {hasCreatorPass ? "Start your badge program" : "Get Crays badge"}
+                {hasCreatorPass ? "Start your membership" : "Get Crays premium"}
               </button>
             )}
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
             <MembershipStat
-              label="Badge price"
+              label="Monthly price"
               value={hasBadgeProgram ? `${compactNumber(badgePrice)} sats` : "Not set"}
+            />
+            <MembershipStat
+              label="Per-post unlock"
+              value={unlockPrice == null ? "Not set" : `${compactNumber(unlockPrice)} sats`}
             />
             <MembershipStat
               label="Members"
@@ -454,21 +469,21 @@ function Profile() {
               label="Members-only posts"
               value={hasBadgeProgram ? compactNumber(premiumCount) : "—"}
             />
-            <MembershipStat label="Access period" value={`${BADGE_DAYS} days`} />
           </div>
 
           {!isOwn && hasBadgeProgram && (
             <p className="mt-3 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-zinc-500">
               <Users className="mt-0.5 size-3.5 shrink-0" />
               {ownedBadge
-                ? `Your badge covers all ${premiumCount} members-only post${premiumCount === 1 ? "" : "s"} from ${name}.`
-                : `Buying the badge unlocks all ${premiumCount} members-only post${premiumCount === 1 ? "" : "s"} from ${name} — no per-post payments.`}
+                ? `Your membership covers all ${premiumCount} members-only post${premiumCount === 1 ? "" : "s"} from ${name}.`
+                : `A membership unlocks all ${premiumCount} members-only post${premiumCount === 1 ? "" : "s"} from ${name} for ${BADGE_DAYS} days. Or pay once for a single post.`}
             </p>
           )}
           {isOwn && !hasCreatorPass && (
             <p className="mt-3 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-zinc-500">
-              <Lock className="mt-0.5 size-3.5 shrink-0" /> A Crays creator badge is required to
-              sell memberships. It’s free while Crays is in beta.
+              <Lock className="mt-0.5 size-3.5 shrink-0" /> Crays premium (
+              {formatUsd(CREATOR_PASS_USD)} / month) is required to sell memberships and single-post
+              unlocks.
             </p>
           )}
         </section>

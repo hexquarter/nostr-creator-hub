@@ -1,18 +1,23 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 import { PageShell } from "@/components/page-shell";
 import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
 import { fetchFeed, fetchProfileStats } from "@/lib/nostr/social";
-import { BADGE_DAYS, badgePriceFromNotes, fetchCreatorMembers } from "@/lib/nostr/badges";
+import {
+  BADGE_DAYS,
+  DEFAULT_BADGE_SATS,
+  badgePriceFromNotes,
+  fetchCreatorMembers,
+} from "@/lib/nostr/badges";
 import {
   CREATOR_PASS_DAYS,
-  activateCreatorPass,
+  CREATOR_PASS_USD,
   creatorPassDaysLeft,
   isCreatorPassActive,
   useCreatorPass,
 } from "@/lib/nostr/creator-pass";
+import { formatUsd, usdToSats, useBtcPrice } from "@/lib/nostr/price";
 import { compactNumber } from "@/lib/format";
 import {
   Zap,
@@ -36,7 +41,7 @@ export const Route = createFileRoute("/premium")({
       {
         name: "description",
         content:
-          "Crays Premium: sell memberships, publish members-only posts and get paid in sats over Lightning. Free while in beta.",
+          "Crays Premium: for $50/month, sell memberships, publish members-only posts and get paid in sats over Lightning.",
       },
     ],
   }),
@@ -77,9 +82,9 @@ const features = [
 ];
 
 const premiumBenefits = [
-  "Sell memberships — one badge price for all your members-only posts",
+  "Sell monthly memberships and single-post unlocks",
   "Publish members-only notes and long-form articles",
-  "Readers pay you directly over Lightning — 0% platform fee",
+  "Fans pay you directly over Lightning — 0% platform fee",
   "Members, members-only posts and zaps in one dashboard",
   "Passkey sign-in, encrypted DMs and Instagram import included",
 ];
@@ -138,13 +143,10 @@ function PremiumBadgeCard() {
   const ui = useUI();
   const nostr = useNostr();
   const pass = useCreatorPass();
+  const btc = useBtcPrice();
   const active = isCreatorPassActive(pass);
   const daysLeft = pass ? creatorPassDaysLeft(pass) : CREATOR_PASS_DAYS;
-
-  const activate = () => {
-    activateCreatorPass();
-    toast.success("Crays premium badge active — members-only posts unlocked");
-  };
+  const sats = usdToSats(CREATOR_PASS_USD, btc);
 
   return (
     <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-900 to-amber-950 text-white shadow-card ring-1 ring-white/10">
@@ -168,7 +170,7 @@ function PremiumBadgeCard() {
                 <Check className="size-3" /> Active
               </span>
             ) : (
-              <span className="text-[10.5px] font-semibold text-white/50">Beta</span>
+              <span className="text-[10.5px] font-semibold text-white/50">Creator plan</span>
             )}
           </div>
 
@@ -179,16 +181,20 @@ function PremiumBadgeCard() {
           </h3>
           <p className="mt-2 max-w-md text-[12.5px] leading-relaxed text-zinc-300">
             {active
-              ? "Anyone who buys your badge unlocks every members-only post you publish. Free while Crays is in beta."
-              : "One badge unlocks every members-only post you publish. Readers pay you directly in sats — Crays never takes a cut."}
+              ? "Fans can join your membership or unlock a single post. Payments land in your Lightning wallet — Crays never takes a cut."
+              : "Crays premium unlocks the paid side of Crays: fans can subscribe to you monthly or buy one post at a time, and every sat goes straight to your wallet."}
           </p>
 
           <div className="mt-5 flex flex-wrap items-end gap-x-2 gap-y-1">
             <span className="text-[28px] font-bold leading-none tracking-tight">
-              {active ? `${daysLeft} days` : "Free"}
+              {active ? `${daysLeft} days` : `${formatUsd(CREATOR_PASS_USD)} / month`}
             </span>
             <span className="pb-0.5 text-[11px] text-zinc-400">
-              {active ? "left on your badge" : `while Crays is in beta · ${CREATOR_PASS_DAYS} days`}
+              {active
+                ? "left on your badge"
+                : sats != null
+                  ? `≈ ${sats.toLocaleString()} sats at the live BTC rate`
+                  : "billed in sats at the live BTC rate"}
             </span>
           </div>
 
@@ -201,19 +207,19 @@ function PremiumBadgeCard() {
                 >
                   Write a members-only post
                 </button>
-                <Link
-                  to="/profile"
+                <button
+                  onClick={() => ui.openUpgrade()}
                   className="inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-[12px] font-semibold text-white/70 transition-colors hover:text-white"
                 >
-                  See your members <ArrowRight className="size-3.5" />
-                </Link>
+                  Renew badge <ArrowRight className="size-3.5" />
+                </button>
               </>
             ) : nostr.account ? (
               <button
-                onClick={activate}
+                onClick={() => ui.openUpgrade()}
                 className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-5 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-amber-600"
               >
-                <Crown className="size-4" /> Activate premium badge — free
+                <Crown className="size-4" /> Get Crays premium
               </button>
             ) : (
               <button
@@ -225,7 +231,7 @@ function PremiumBadgeCard() {
             )}
           </div>
           <p className="mt-3 text-[10.5px] text-white/40">
-            No card · no auto-renew · your keys stay on your device
+            {CREATOR_PASS_DAYS}-day periods · no auto-renew · your keys stay on your device
           </p>
         </div>
 
@@ -263,6 +269,7 @@ function CreatorDashboard() {
   const [zapsEarned, setZapsEarned] = useState<number | null>(null);
   const [premiumPosts, setPremiumPosts] = useState(0);
   const [badgePrice, setBadgePrice] = useState<number | null>(null);
+  const [unlockPrice, setUnlockPrice] = useState<number | null>(null);
   const [members, setMembers] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -276,6 +283,7 @@ function CreatorDashboard() {
       setZapsEarned(null);
       setPremiumPosts(0);
       setBadgePrice(null);
+      setUnlockPrice(null);
       setMembers(null);
       return;
     }
@@ -291,7 +299,17 @@ function CreatorDashboard() {
         setStats(result);
         setZapsEarned(feed.reduce((sum, note) => sum + note.counts.zapSats, 0));
         setPremiumPosts(feed.filter((note) => note.premium).length);
-        setBadgePrice(badgePriceFromNotes(feed));
+        const monthly = badgePriceFromNotes(feed);
+        setBadgePrice(monthly);
+        const latestPremium = feed
+          .filter((note) => note.premium)
+          .sort((a, b) => b.createdAt - a.createdAt)[0];
+        setUnlockPrice(
+          latestPremium
+            ? (latestPremium.premiumUnlockSats ??
+                Math.max(21, Math.round((monthly ?? DEFAULT_BADGE_SATS) / 10)))
+            : null,
+        );
         setMembers(memberCount);
       })
       .catch(() => undefined)
@@ -327,7 +345,7 @@ function CreatorDashboard() {
               Sign in
             </button>
             <p className="mt-2 text-center text-[11px] text-zinc-400">
-              Free while in beta · no card
+              {formatUsd(CREATOR_PASS_USD)} / month · cancel anytime
             </p>
           </div>
         </div>
@@ -366,8 +384,8 @@ function CreatorDashboard() {
           hint="From your notes on the relays"
         />
         <DashboardRow
-          icon={Crown}
-          label="Creator badge"
+          icon={Users}
+          label="Membership"
           value={
             badgePrice == null
               ? "Not set"
@@ -375,13 +393,23 @@ function CreatorDashboard() {
           }
           hint={
             badgePrice == null
-              ? "Post something members-only to start your badge program"
+              ? "Post something members-only to start your membership"
               : `${premiumPosts} members-only post${premiumPosts === 1 ? "" : "s"} · ${members ?? 0} member${members === 1 ? "" : "s"}`
           }
         />
         <DashboardRow
+          icon={Zap}
+          label="Single-post unlock"
+          value={unlockPrice == null ? "Not set" : `${compactNumber(unlockPrice)} sats`}
+          hint={
+            unlockPrice == null
+              ? "Set a per-post price when you publish members-only content"
+              : "One-time price on your latest members-only post"
+          }
+        />
+        <DashboardRow
           icon={Crown}
-          label="Crays badge"
+          label="Crays premium"
           value={
             passActive && creatorPass
               ? `Active · ${creatorPassDaysLeft(creatorPass)} days left`
@@ -389,21 +417,16 @@ function CreatorDashboard() {
           }
           hint={
             passActive
-              ? `Free while in beta · renews in ${CREATOR_PASS_DAYS} days`
-              : "Required to sell memberships and post members-only content"
+              ? `${formatUsd(CREATOR_PASS_USD)} / month · renews in ${CREATOR_PASS_DAYS} days`
+              : `Required to sell memberships · ${formatUsd(CREATOR_PASS_USD)} / month`
           }
           action={
-            passActive ? undefined : (
-              <button
-                onClick={() => {
-                  activateCreatorPass();
-                  toast.success("Crays creator badge active — members-only posts unlocked");
-                }}
-                className="shrink-0 rounded-full bg-amber-500 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-amber-600"
-              >
-                Activate
-              </button>
-            )
+            <button
+              onClick={() => ui.openUpgrade()}
+              className="shrink-0 rounded-full bg-amber-500 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-amber-600"
+            >
+              {passActive ? "Renew" : "Upgrade"}
+            </button>
           }
         />
         <DashboardRow
