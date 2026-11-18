@@ -15,6 +15,7 @@ import { useNostr } from "@/components/nostr-provider";
 import type { Profile } from "@/lib/nostr/profiles";
 import { fetchProfile, normalizePubkey, pubkeyToNpub } from "@/lib/nostr/profiles";
 import { addRelay, getCustomRelays, removeRelay } from "@/lib/nostr/relays";
+import { hasPasskey, hasWebAuthn } from "@/lib/nostr/passkey";
 import { useBtcPrice, satsToUsd, formatUsd } from "@/lib/nostr/price";
 import { requestPaymentInvoice, isLightningInvoice } from "@/lib/nostr/zaps";
 import {
@@ -101,6 +102,9 @@ import {
   Loader2,
   Pencil,
   LogIn,
+  ChevronDown,
+  ChevronLeft,
+  Puzzle,
 } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
@@ -1993,8 +1997,7 @@ function FauxQR() {
 }
 
 // ---------- Auth Modal ----------
-type AuthTab = "passkey" | "nostr" | "keys";
-type NostrSub = "bunker" | "nostr-connect" | "nip07";
+type AdvancedMethod = "signer" | "extension" | "key";
 
 function AuthModal({
   open,
@@ -2008,10 +2011,12 @@ function AuthModal({
   onSignedIn: () => void;
 }) {
   const nostr = useNostr();
-  const [tab, setTab] = useState<AuthTab>("passkey");
   const [mode, setMode] = useState<"signin" | "create">("signin");
+  const [passkeyReady, setPasskeyReady] = useState(true);
   const [busy, setBusy] = useState<null | string>(null);
-  const [nostrSub, setNostrSub] = useState<NostrSub>("bunker");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [method, setMethod] = useState<AdvancedMethod | null>(null);
+  const [signerMode, setSignerMode] = useState<"qr" | "link">("qr");
   const [bunker, setBunker] = useState("");
   const [nsec, setNsec] = useState("");
   const [connectUri, setConnectUri] = useState("");
@@ -2019,22 +2024,24 @@ function AuthModal({
   const connectStarted = useRef(false);
 
   useEffect(() => {
-    if (open) {
-      setTab("passkey");
-      setMode("signin");
-      setBusy(null);
-      setNostrSub("bunker");
-      setBunker("");
-      setNsec("");
-      setConnectUri("");
-      setWaitingConnect(false);
-      connectStarted.current = false;
-    }
+    if (!open) return;
+    setMode(hasPasskey() ? "signin" : "create");
+    const supported = hasWebAuthn();
+    setPasskeyReady(supported);
+    setBusy(null);
+    setAdvancedOpen(!supported);
+    setMethod(null);
+    setSignerMode("qr");
+    setBunker("");
+    setNsec("");
+    setConnectUri("");
+    setWaitingConnect(false);
+    connectStarted.current = false;
   }, [open]);
 
-  // Kick off the NIP-46 nostr-connect handshake the first time that pane opens.
+  // Start the Nostr Connect handshake the first time the QR is shown.
   useEffect(() => {
-    if (!open || nostrSub !== "nostr-connect" || connectStarted.current) return;
+    if (!open || method !== "signer" || signerMode !== "qr" || connectStarted.current) return;
     connectStarted.current = true;
     const pending = nostr.startNostrConnect();
     setConnectUri(pending.uri);
@@ -2051,7 +2058,7 @@ function AuthModal({
       .finally(() => setWaitingConnect(false));
     // startNostrConnect is stable for the lifetime of the provider
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, nostrSub]);
+  }, [open, method, signerMode]);
 
   const run = async (label: string, action: () => Promise<void>, success = "Signed in") => {
     setBusy(label);
@@ -2066,206 +2073,201 @@ function AuthModal({
     }
   };
 
+  const isCreate = mode === "create";
+  const intent = options.intent?.trim();
+  const intentSentence =
+    intent && !/^(sign in|sign in \/ create|switch accounts)$/i.test(intent)
+      ? `Sign in to ${intent}.`
+      : null;
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-[520px]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ShieldCheck className="size-5 text-brand" />
-            {mode === "create" ? "Create your account" : "Connect to Crays"}
+      <DialogContent className="max-h-[92vh] gap-0 overflow-y-auto p-6 sm:max-w-[420px]">
+        <DialogHeader className="items-center text-center">
+          <div className="mx-auto grid size-12 place-items-center rounded-full bg-brand/10 text-brand">
+            <Fingerprint className="size-6" strokeWidth={1.8} />
+          </div>
+          <DialogTitle className="mt-3 text-[20px] font-semibold tracking-tight text-zinc-900">
+            {isCreate ? "Create your Crays account" : "Welcome back"}
           </DialogTitle>
-          <DialogDescription>
-            {options.intent
-              ? `Sign in to ${options.intent}. Your identity is yours — you can leave anytime.`
-              : "Passkey-first. Nostr-native. Your keys, your account, your audience."}
+          <DialogDescription className="mt-1 max-w-[300px] text-[13px] leading-relaxed text-zinc-500">
+            {intentSentence
+              ? intentSentence
+              : isCreate
+                ? "No password, no seed phrase. Your face, fingerprint or device PIN is all you need."
+                : "Unlock your account with your face, fingerprint or device PIN."}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Sign in / Create toggle */}
-        <div className="flex gap-1 rounded-full bg-zinc-100 p-1 text-[12px] font-medium w-fit self-center">
-          {(["signin", "create"] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              className={`rounded-full px-4 py-1.5 transition-colors ${mode === m ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500"}`}
-            >
-              {m === "signin" ? "Sign in" : "Create account"}
-            </button>
-          ))}
-        </div>
-
-        {/* Method tabs */}
-        <div className="mt-1 grid grid-cols-3 gap-2">
-          <TabCard
-            active={tab === "passkey"}
-            onClick={() => setTab("passkey")}
-            icon={Fingerprint}
-            title="Passkey"
-            badge="Recommended"
-          />
-          <TabCard
-            active={tab === "nostr"}
-            onClick={() => setTab("nostr")}
-            icon={Radio}
-            title="Nostr signer"
-          />
-          <TabCard
-            active={tab === "keys"}
-            onClick={() => setTab("keys")}
-            icon={KeyRound}
-            title="nsec"
-          />
-        </div>
-
-        <div className="mt-1 min-h-[200px]">
-          {tab === "passkey" && (
-            <div className="space-y-3">
-              <p className="text-[12.5px] text-zinc-600">
-                {mode === "create"
-                  ? "Create an account secured by your device — Face ID, Touch ID or Windows Hello. No password, no seed to lose. Your Nostr key is generated on-device and wrapped by the passkey."
-                  : "Use the passkey stored on this device or a hardware key to sign in instantly."}
-              </p>
-              <ul className="space-y-1.5 text-[12px] text-zinc-500">
-                <li className="flex gap-2">
-                  <Check className="size-4 text-emerald-500" /> Phishing-resistant
-                </li>
-                <li className="flex gap-2">
-                  <Check className="size-4 text-emerald-500" /> Syncs across your Apple / Google
-                  devices
-                </li>
-                <li className="flex gap-2">
-                  <Check className="size-4 text-emerald-500" /> Export your nsec anytime
-                </li>
-              </ul>
-              <PrimaryBtn
-                className="w-full"
-                disabled={!!busy}
-                onClick={() =>
-                  void run(
-                    "Waiting for passkey…",
-                    () => nostr.signInWithPasskey(mode).then(() => undefined),
-                    mode === "create" ? "Account created" : "Signed in with your passkey",
-                  )
-                }
-              >
-                {busy ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" /> {busy}
-                  </>
-                ) : (
-                  <>
-                    <Fingerprint className="size-4" />{" "}
-                    {mode === "create" ? "Create with passkey" : "Continue with passkey"}
-                  </>
-                )}
-              </PrimaryBtn>
-              <p className="text-center text-[11px] text-zinc-400">
-                Works with iCloud Keychain, Google Password Manager and security keys.
-              </p>
-            </div>
+        <button
+          disabled={!!busy || !passkeyReady}
+          onClick={() =>
+            void run(
+              "Waiting for passkey…",
+              () => nostr.signInWithPasskey(mode).then(() => undefined),
+              isCreate ? "Account created" : "Signed in with your passkey",
+            )
+          }
+          className="mt-6 flex w-full items-center justify-center gap-2.5 rounded-xl bg-zinc-900 px-4 py-3.5 text-[14px] font-semibold text-white shadow-sm transition-colors hover:bg-black disabled:opacity-60"
+        >
+          {busy ? (
+            <>
+              <Loader2 className="size-[18px] animate-spin" /> {busy}
+            </>
+          ) : (
+            <>
+              <Fingerprint className="size-[18px]" />{" "}
+              {isCreate ? "Create account with passkey" : "Continue with passkey"}
+            </>
           )}
+        </button>
 
-          {tab === "nostr" && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-1.5">
-                {(
-                  [
-                    { id: "bunker", label: "Bunker" },
-                    { id: "nostr-connect", label: "Nostr Connect" },
-                    { id: "nip07", label: "Extension" },
-                  ] as const
-                ).map((o) => (
-                  <button
-                    key={o.id}
-                    onClick={() => setNostrSub(o.id)}
-                    className={`rounded-lg px-2 py-2 text-[11.5px] font-semibold ring-1 transition-colors ${
-                      nostrSub === o.id
-                        ? "bg-zinc-900 text-white ring-zinc-900"
-                        : "bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50"
-                    }`}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-              {nostrSub === "bunker" && (
-                <>
-                  <p className="text-[12.5px] text-zinc-600">
-                    Paste a{" "}
-                    <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">bunker://</code>{" "}
-                    URI from your remote signer (nsec.app, Amber, Nostrify…).
-                  </p>
-                  <Field label="Bunker URI">
-                    <input
-                      value={bunker}
-                      onChange={(e) => setBunker(e.target.value)}
-                      placeholder="bunker://npub…?relay=wss://…"
-                      className={`${inputCls} font-mono text-[12px]`}
-                    />
-                  </Field>
-                  <PrimaryBtn
-                    className="w-full"
-                    disabled={!bunker.trim() || !!busy}
-                    onClick={() =>
-                      void run(
-                        "Connecting to signer…",
-                        () => nostr.signInWithBunker(bunker),
-                        "Connected to your signer",
-                      )
-                    }
-                  >
-                    {busy ? (
-                      <>
-                        <Loader2 className="size-4 animate-spin" /> {busy}
-                      </>
-                    ) : (
-                      "Connect signer"
-                    )}
-                  </PrimaryBtn>
-                </>
+        {!passkeyReady && (
+          <p className="mt-2 text-center text-[11.5px] text-amber-700">
+            Passkeys aren't available in this browser. Use one of the options below.
+          </p>
+        )}
+
+        <p className="mt-3 text-center text-[12px] text-zinc-500">
+          {isCreate ? "Already have an account?" : "New to Crays?"}{" "}
+          <button
+            onClick={() => setMode(isCreate ? "signin" : "create")}
+            className="font-semibold text-brand hover:underline"
+          >
+            {isCreate ? "Sign in" : "Create one"}
+          </button>
+        </p>
+
+        <div className="mt-6 border-t border-zinc-100 pt-4">
+          <button
+            onClick={() => {
+              setAdvancedOpen((v) => !v);
+              setMethod(null);
+            }}
+            className="mx-auto flex items-center gap-1 text-[12px] font-medium text-zinc-500 transition-colors hover:text-zinc-800"
+          >
+            {advancedOpen ? "Hide other options" : "Other sign-in options"}
+            <ChevronDown
+              className={`size-3.5 transition-transform ${advancedOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+
+          {advancedOpen && (
+            <div className="mt-3">
+              {method === null && (
+                <div className="space-y-1.5">
+                  <AdvancedRow
+                    icon={Radio}
+                    title="Signer app"
+                    subtitle="Amber, nsec.app or Nostrify"
+                    onClick={() => setMethod("signer")}
+                  />
+                  <AdvancedRow
+                    icon={Puzzle}
+                    title="Browser extension"
+                    subtitle="Alby or nos2x"
+                    onClick={() => setMethod("extension")}
+                  />
+                  <AdvancedRow
+                    icon={KeyRound}
+                    title="Private key"
+                    subtitle="Use a key you already have"
+                    onClick={() => setMethod("key")}
+                  />
+                </div>
               )}
-              {nostrSub === "nostr-connect" && (
-                <>
-                  <p className="text-[12.5px] text-zinc-600">
-                    Scan this with Amber, Nostrify, nsec.app or any NIP-46 signer.
-                  </p>
-                  <div className="mx-auto grid size-44 place-items-center rounded-xl bg-white p-3 ring-1 ring-zinc-200">
-                    {connectUri ? (
-                      <QRCodeSVG value={connectUri} size={152} level="M" />
-                    ) : (
-                      <Loader2 className="size-6 animate-spin text-zinc-400" />
-                    )}
+
+              {method && (
+                <button
+                  onClick={() => setMethod(null)}
+                  className="mb-2 flex items-center gap-1 text-[11.5px] font-medium text-zinc-400 hover:text-zinc-700"
+                >
+                  <ChevronLeft className="size-3.5" /> Back
+                </button>
+              )}
+
+              {method === "signer" && (
+                <div className="space-y-3">
+                  <div className="flex gap-1 rounded-full bg-zinc-100 p-1 text-[11.5px] font-medium">
+                    {(["qr", "link"] as const).map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => setSignerMode(m)}
+                        className={`flex-1 rounded-full px-3 py-1.5 transition-colors ${signerMode === m ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500"}`}
+                      >
+                        {m === "qr" ? "Scan QR code" : "Paste a link"}
+                      </button>
+                    ))}
                   </div>
-                  {connectUri && (
-                    <button
-                      onClick={() => {
-                        void navigator.clipboard.writeText(connectUri);
-                        toast.success("Connection link copied");
-                      }}
-                      className="mx-auto flex items-center gap-1.5 text-[11.5px] font-semibold text-brand"
-                    >
-                      <Copy className="size-3.5" /> Copy connection link
-                    </button>
+                  {signerMode === "qr" ? (
+                    <>
+                      <div className="mx-auto grid size-40 place-items-center rounded-xl bg-white p-3 ring-1 ring-zinc-200">
+                        {connectUri ? (
+                          <QRCodeSVG value={connectUri} size={136} level="M" />
+                        ) : (
+                          <Loader2 className="size-6 animate-spin text-zinc-400" />
+                        )}
+                      </div>
+                      <p className="text-center text-[11.5px] text-zinc-500">
+                        {waitingConnect
+                          ? "Waiting for your signer to approve…"
+                          : "Scan with your signer app to connect."}
+                      </p>
+                      {connectUri && (
+                        <button
+                          onClick={() => {
+                            void navigator.clipboard.writeText(connectUri);
+                            toast.success("Connection link copied");
+                          }}
+                          className="mx-auto flex items-center gap-1.5 text-[11.5px] font-semibold text-brand"
+                        >
+                          <Copy className="size-3.5" /> Copy link
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        value={bunker}
+                        onChange={(e) => setBunker(e.target.value)}
+                        placeholder="bunker://…"
+                        className={`${inputCls} font-mono text-[12px]`}
+                      />
+                      <PrimaryBtn
+                        className="w-full"
+                        disabled={!bunker.trim() || !!busy}
+                        onClick={() =>
+                          void run(
+                            "Connecting…",
+                            () => nostr.signInWithBunker(bunker),
+                            "Connected to your signer",
+                          )
+                        }
+                      >
+                        {busy ? (
+                          <>
+                            <Loader2 className="size-4 animate-spin" /> {busy}
+                          </>
+                        ) : (
+                          "Connect"
+                        )}
+                      </PrimaryBtn>
+                    </>
                   )}
-                  <p className="text-center text-[11.5px] text-zinc-500">
-                    {waitingConnect
-                      ? "Waiting for your signer to approve…"
-                      : "Open the link in your signer app if the QR doesn't work."}
-                  </p>
-                </>
+                </div>
               )}
-              {nostrSub === "nip07" && (
-                <>
-                  <p className="text-[12.5px] text-zinc-600">
-                    Use a browser extension like Alby or nos2x. Crays never touches your key — the
-                    extension signs each event.
+
+              {method === "extension" && (
+                <div className="space-y-3">
+                  <p className="text-center text-[12px] leading-relaxed text-zinc-500">
+                    Your extension keeps the key and signs for you. Crays never sees it.
                   </p>
                   <PrimaryBtn
                     className="w-full"
                     disabled={!!busy}
                     onClick={() =>
                       void run(
-                        "Talking to your extension…",
+                        "Connecting…",
                         () => nostr.signInWithNip07(),
                         "Signed in with your extension",
                       )
@@ -2279,60 +2281,19 @@ function AuthModal({
                       "Connect extension"
                     )}
                   </PrimaryBtn>
-                </>
+                </div>
               )}
-            </div>
-          )}
 
-          {tab === "keys" && (
-            <div className="space-y-3">
-              {mode === "create" ? (
-                <>
-                  <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-amber-100">
-                    <p className="text-[12px] font-semibold text-amber-800">
-                      A fresh Nostr key will be generated on this device.
-                    </p>
-                    <p className="mt-0.5 text-[11.5px] text-amber-700">
-                      Back up your nsec after signing in. Lose it and you lose the account.
-                    </p>
-                  </div>
-                  <PrimaryBtn
-                    className="w-full"
-                    disabled={!!busy}
-                    onClick={() =>
-                      void run(
-                        "Generating keys…",
-                        async () => {
-                          await nostr.createLocalAccount();
-                        },
-                        "Account created",
-                      )
-                    }
-                  >
-                    {busy ? (
-                      <>
-                        <Loader2 className="size-4 animate-spin" /> {busy}
-                      </>
-                    ) : (
-                      "Generate my keys"
-                    )}
-                  </PrimaryBtn>
-                </>
-              ) : (
-                <>
-                  <Field
-                    label="Private key (nsec)"
-                    hint="Stored encrypted in this browser only. Prefer a passkey or signer."
-                  >
-                    <input
-                      value={nsec}
-                      onChange={(e) => setNsec(e.target.value)}
-                      type="password"
-                      autoComplete="off"
-                      placeholder="nsec1…"
-                      className={`${inputCls} font-mono text-[12px]`}
-                    />
-                  </Field>
+              {method === "key" && (
+                <div className="space-y-3">
+                  <input
+                    value={nsec}
+                    onChange={(e) => setNsec(e.target.value)}
+                    type="password"
+                    autoComplete="off"
+                    placeholder="nsec1…"
+                    className={`${inputCls} font-mono text-[12px]`}
+                  />
                   <PrimaryBtn
                     className="w-full"
                     disabled={!nsec.trim() || !!busy}
@@ -2340,7 +2301,7 @@ function AuthModal({
                       void run(
                         "Verifying key…",
                         () => nostr.signInWithNsec(nsec),
-                        "Signed in with your nsec",
+                        "Signed in with your private key",
                       )
                     }
                   >
@@ -2349,55 +2310,62 @@ function AuthModal({
                         <Loader2 className="size-4 animate-spin" /> {busy}
                       </>
                     ) : (
-                      "Sign in with nsec"
+                      "Sign in with private key"
                     )}
                   </PrimaryBtn>
-                </>
+                  {isCreate && (
+                    <button
+                      onClick={() =>
+                        void run(
+                          "Creating your key…",
+                          async () => {
+                            await nostr.createLocalAccount();
+                          },
+                          "Account created",
+                        )
+                      }
+                      disabled={!!busy}
+                      className="w-full text-center text-[11.5px] font-medium text-zinc-400 hover:text-zinc-700 disabled:opacity-60"
+                    >
+                      No key yet? Create one on this device instead
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )}
         </div>
 
-        <div className="mt-2 flex items-center gap-2 rounded-lg bg-zinc-50 p-2.5 text-[11.5px] text-zinc-500 ring-1 ring-zinc-100">
-          <ShieldCheck className="size-3.5 text-zinc-400" />
-          Crays never sees your private key. Signing happens on your device or your signer.
-        </div>
+        <p className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-zinc-400">
+          <Lock className="size-3" /> Your keys never leave your device.
+        </p>
       </DialogContent>
     </Dialog>
   );
 }
 
-function TabCard({
-  active,
-  onClick,
+function AdvancedRow({
   icon: Icon,
   title,
-  badge,
+  subtitle,
+  onClick,
 }: {
-  active: boolean;
-  onClick: () => void;
   icon: React.ComponentType<{ className?: string }>;
   title: string;
-  badge?: string;
+  subtitle: string;
+  onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
-      className={`relative rounded-xl px-3 py-3 text-left transition-colors ${
-        active
-          ? "bg-zinc-900 text-white ring-1 ring-zinc-900"
-          : "bg-white text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-50"
-      }`}
+      className="flex w-full items-center gap-3 rounded-xl border border-zinc-200 px-3 py-2.5 text-left transition-colors hover:bg-zinc-50"
     >
-      <Icon className={`size-4 ${active ? "text-white" : "text-zinc-500"}`} />
-      <p className="mt-1.5 text-[12.5px] font-semibold">{title}</p>
-      {badge && (
-        <span
-          className={`absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${active ? "bg-white/15 text-white" : "bg-brand/10 text-brand"}`}
-        >
-          {badge}
-        </span>
-      )}
+      <Icon className="size-4 shrink-0 text-zinc-500" />
+      <span className="min-w-0">
+        <span className="block text-[12.5px] font-semibold text-zinc-800">{title}</span>
+        <span className="block truncate text-[11px] text-zinc-400">{subtitle}</span>
+      </span>
+      <ArrowRight className="ml-auto size-3.5 shrink-0 text-zinc-300" />
     </button>
   );
 }
