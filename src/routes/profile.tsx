@@ -6,7 +6,12 @@ import { PostCard, postFromNote } from "@/components/post-card";
 import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
 import { fetchFeed, fetchProfileStats, type FeedNote } from "@/lib/nostr/social";
-import { emptyProfile, fetchProfile, normalizePubkey, type Profile } from "@/lib/nostr/profiles";
+import {
+  emptyProfile,
+  fetchProfile,
+  parseProfilePointer,
+  type Profile,
+} from "@/lib/nostr/profiles";
 import { compactNumber } from "@/lib/format";
 import {
   BadgeCheck,
@@ -25,10 +30,17 @@ import {
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/profile")({
-  validateSearch: (search: Record<string, unknown>): { pubkey?: string } => ({
-    pubkey:
-      typeof search.pubkey === "string" ? (normalizePubkey(search.pubkey) ?? undefined) : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>): { pubkey?: string; relays?: string } => {
+    const pointer = typeof search.pubkey === "string" ? parseProfilePointer(search.pubkey) : null;
+    if (!pointer) return {};
+    const hints = pointer.relays.join(",");
+    return {
+      pubkey: pointer.pubkey,
+      // Keep relay hints when the router validates an already-normalized search.
+      relays:
+        hints || (typeof search.relays === "string" && search.relays ? search.relays : undefined),
+    };
+  },
   head: () => ({
     meta: [
       { title: "Profile — Crays" },
@@ -62,6 +74,10 @@ function Profile() {
   const [loading, setLoading] = useState(false);
 
   const pubkey = search.pubkey ?? account?.pubkey;
+  const relays = useMemo(
+    () => search.relays?.split(",").filter(Boolean) ?? undefined,
+    [search.relays],
+  );
   const isOwn = Boolean(account && pubkey === account.pubkey);
   const profile = pubkey
     ? viewed?.pubkey === pubkey
@@ -81,7 +97,7 @@ function Profile() {
       return;
     }
     let active = true;
-    fetchProfile(pubkey)
+    fetchProfile(pubkey, relays)
       .then((next) => {
         if (active) setViewed({ pubkey, profile: next });
       })
@@ -91,7 +107,7 @@ function Profile() {
     return () => {
       active = false;
     };
-  }, [pubkey, isOwn, account?.profile]);
+  }, [pubkey, relays, isOwn, account?.profile]);
 
   const load = useCallback(async () => {
     if (!pubkey) {

@@ -121,7 +121,8 @@ function CreatorDashboard() {
   const [loading, setLoading] = useState(false);
 
   const pubkey = nostr.account?.pubkey;
-  const lud16 = nostr.account?.profile.lud16 ?? nostr.account?.profile.lud06;
+  const lud16 = nostr.wallet.address;
+  const hostedAddress = nostr.wallet.addressSource === "hosted";
 
   useEffect(() => {
     if (!pubkey) {
@@ -212,7 +213,13 @@ function CreatorDashboard() {
           icon={Wallet}
           label="Lightning address"
           value={lud16 ?? "Not set"}
-          hint={lud16 ? "Ready to receive zaps" : "Add one in Settings → Profile"}
+          hint={
+            !lud16
+              ? "Sign in to derive one from your Nostr key"
+              : hostedAddress
+                ? "npub.cash · derived from your Nostr key"
+                : "Ready to receive zaps"
+          }
           mono={!!lud16}
         />
       </div>

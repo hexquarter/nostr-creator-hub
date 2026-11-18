@@ -1,10 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { PageShell } from "@/components/page-shell";
 import { useNostr } from "@/components/nostr-provider";
 import { useUI } from "@/components/modals/ui-provider";
 import { fetchNotifications, type NotificationItem } from "@/lib/nostr/social";
 import { invalidateQueries } from "@/lib/nostr/relays";
+import { usePreferences } from "@/lib/preferences";
 import { compactNumber, timeAgo } from "@/lib/format";
 import { Zap, Repeat2, MessageCircle, AtSign, Loader2, Heart, BellOff } from "lucide-react";
 
@@ -35,6 +36,7 @@ type Tab = (typeof tabs)[number];
 function Notifications() {
   const nostr = useNostr();
   const ui = useUI();
+  const preferences = usePreferences();
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<Tab>("All");
@@ -62,12 +64,23 @@ function Notifications() {
   }, [pubkey]);
 
   const visible = useMemo(() => {
-    if (tab === "All") return items;
-    if (tab === "Mentions") return items.filter((i) => i.kind === "mention" || i.kind === "reply");
-    if (tab === "Zaps") return items.filter((i) => i.kind === "zap");
-    if (tab === "Replies") return items.filter((i) => i.kind === "reply");
-    return items.filter((i) => i.kind === "reaction");
-  }, [items, tab]);
+    const enabled = items.filter((item) => {
+      if (item.kind === "zap") return preferences.notifications.zaps;
+      if (item.kind === "reply" || item.kind === "mention") {
+        return preferences.notifications.replies;
+      }
+      if (item.kind === "reaction") return preferences.notifications.reactions;
+      if (item.kind === "repost") return preferences.notifications.reposts;
+      return true;
+    });
+    if (tab === "All") return enabled;
+    if (tab === "Mentions") {
+      return enabled.filter((i) => i.kind === "mention" || i.kind === "reply");
+    }
+    if (tab === "Zaps") return enabled.filter((i) => i.kind === "zap");
+    if (tab === "Replies") return enabled.filter((i) => i.kind === "reply");
+    return enabled.filter((i) => i.kind === "reaction");
+  }, [items, tab, preferences.notifications]);
 
   return (
     <PageShell
@@ -138,17 +151,23 @@ function Notifications() {
                 className="relative flex items-start gap-4 px-5 py-4 transition-colors hover:bg-zinc-50/80"
               >
                 <div className="relative">
-                  {n.actor.picture ? (
-                    <img
-                      src={n.actor.picture}
-                      alt=""
-                      className="size-10 rounded-full object-cover"
-                    />
-                  ) : (
-                    <div className="grid size-10 place-items-center rounded-full bg-zinc-100 text-[13px] font-semibold text-zinc-500">
-                      {name.slice(0, 1).toUpperCase()}
-                    </div>
-                  )}
+                  <Link
+                    to="/profile"
+                    search={{ pubkey: n.actor.pubkey }}
+                    className="block rounded-full transition-opacity hover:opacity-80"
+                  >
+                    {n.actor.picture ? (
+                      <img
+                        src={n.actor.picture}
+                        alt=""
+                        className="size-10 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="grid size-10 place-items-center rounded-full bg-zinc-100 text-[13px] font-semibold text-zinc-500">
+                        {name.slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                  </Link>
                   <span
                     className={`absolute -bottom-1 -right-1 grid size-5 place-items-center rounded-full ring-2 ring-white ${m.bg}`}
                   >
@@ -157,7 +176,13 @@ function Notifications() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[13px] text-zinc-700">
-                    <span className="font-semibold text-zinc-900">{name}</span>{" "}
+                    <Link
+                      to="/profile"
+                      search={{ pubkey: n.actor.pubkey }}
+                      className="font-semibold text-zinc-900 hover:underline"
+                    >
+                      {name}
+                    </Link>{" "}
                     <span className="text-zinc-400">{n.actor.handle}</span>{" "}
                     {n.kind === "zap" && (
                       <>

@@ -13,7 +13,13 @@ import { QRCodeSVG } from "qrcode.react";
 import type { NostrEvent } from "nostr-tools";
 import { useNostr } from "@/components/nostr-provider";
 import type { Profile } from "@/lib/nostr/profiles";
-import { fetchProfile, normalizePubkey, pubkeyToNpub } from "@/lib/nostr/profiles";
+import {
+  fetchProfile,
+  normalizePubkey,
+  parseProfilePointer,
+  pubkeyToNpub,
+  shortNpub,
+} from "@/lib/nostr/profiles";
 import { addRelay, getCustomRelays, removeRelay } from "@/lib/nostr/relays";
 import { hasPasskey, hasWebAuthn } from "@/lib/nostr/passkey";
 import { useBtcPrice, satsToUsd, formatUsd } from "@/lib/nostr/price";
@@ -1134,21 +1140,17 @@ function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void })
             {nostr.wallet.connected
               ? "Create a Lightning invoice from your connected wallet."
               : address
-                ? "Share your Lightning address — payments arrive with no setup."
-                : "Add a Lightning address to your profile, or connect a wallet."}
+                ? nostr.wallet.addressSource === "hosted"
+                  ? "Your wallet is derived from your Nostr key. Sats arrive at your npub.cash address — claim them with your Nostr key at npub.cash."
+                  : "Share your Lightning address — payments arrive with no setup."
+                : "Sign in to derive a Lightning wallet from your Nostr identity."}
           </DialogDescription>
         </DialogHeader>
         {!nostr.wallet.connected ? (
           address ? (
             <div className="rounded-xl bg-zinc-50 p-5 text-center ring-1 ring-zinc-100">
               <div className="mx-auto grid size-44 place-items-center rounded-xl bg-white p-3 shadow-sm">
-                {address.includes("@") ? (
-                  <div className="grid h-full w-full place-items-center rounded-lg bg-gradient-to-br from-amber-200 to-orange-300 px-3 text-center text-[12px] font-semibold text-amber-900">
-                    {address}
-                  </div>
-                ) : (
-                  <QRCodeSVG value={address} size={152} level="M" />
-                )}
+                <QRCodeSVG value={`lightning:${address}`} size={152} level="M" />
               </div>
               <p className="mt-3 break-all font-mono text-[11px] text-zinc-600">{address}</p>
               <button
@@ -1861,15 +1863,43 @@ function CommandPalette({
 }) {
   const navigate = useNavigate();
   const ui = useUI();
+  const [query, setQuery] = useState("");
+  const pointer = useMemo(() => parseProfilePointer(query), [query]);
   const go = (to: string) => {
     onOpenChange(false);
     navigate({ to });
   };
+  useEffect(() => {
+    if (open) setQuery("");
+  }, [open]);
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
-      <CommandInput placeholder="Search posts, creators, commands…" />
+      <CommandInput
+        value={query}
+        onValueChange={setQuery}
+        placeholder="Search posts, creators, or paste an npub / nprofile…"
+      />
       <CommandList>
         <CommandEmpty>No results.</CommandEmpty>
+        {pointer && (
+          <CommandGroup heading="Open profile">
+            <CommandItem
+              value={`profile ${pointer.pubkey} ${query}`}
+              onSelect={() => {
+                onOpenChange(false);
+                navigate({
+                  to: "/profile",
+                  search: {
+                    pubkey: pointer.pubkey,
+                    relays: pointer.relays.length > 0 ? pointer.relays.join(",") : undefined,
+                  },
+                });
+              }}
+            >
+              <User className="size-4" /> View @{shortNpub(pointer.pubkey)}
+            </CommandItem>
+          </CommandGroup>
+        )}
         <CommandGroup heading="Navigate">
           <CommandItem onSelect={() => go("/")}>
             <Home className="size-4" /> Home

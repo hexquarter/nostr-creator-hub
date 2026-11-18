@@ -14,7 +14,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { nip19, type NostrEvent } from "nostr-tools";
 import { AvatarTile } from "./avatar-tile";
@@ -22,6 +22,8 @@ import { useUI } from "./modals/ui-provider";
 import { useNostr } from "./nostr-provider";
 import { compactNumber, timeAgo } from "@/lib/format";
 import { contentWithoutImages, type FeedNote } from "@/lib/nostr/social";
+import { shortNpub } from "@/lib/nostr/profiles";
+import { usePreferences } from "@/lib/preferences";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -80,10 +82,17 @@ export function postFromNote(note: FeedNote): Post {
 export function PostCard({ post }: { post: Post }) {
   const ui = useUI();
   const nostr = useNostr();
+  const preferences = usePreferences();
   const [bookmarked, setBookmarked] = useState(() => nostr.bookmarks.includes(post.id));
   const [reposted, setReposted] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<string>>(() => new Set());
+
+  // Preferences live in localStorage, so apply them after hydration to keep
+  // server and client markup identical.
+  useEffect(() => {
+    setRevealed(preferences.privacy.showSensitive);
+  }, [preferences.privacy.showSensitive]);
   const [following, setFollowing] = useState(() =>
     post.authorPubkey ? nostr.isFollowing(post.authorPubkey) : false,
   );
@@ -355,31 +364,87 @@ export function isRealPost(post: Post) {
   return Boolean(post.event);
 }
 
+const ENTITY_RE =
+  /(https?:\/\/[^\s<>"']+|(?:nostr:)?(?:npub|nprofile|note|nevent|naddr)1[0-9a-z]+)/gi;
+
+function trimEntity(token: string) {
+  return token.replace(/[),.!?;:]+$/, "");
+}
+
 function PostContent({ content }: { content: string }) {
   if (!content.trim()) return null;
-  const parts = content.split(/(https?:\/\/[^\s<>"']+)/g);
+  const parts = content.split(ENTITY_RE);
   return (
     <p className="min-w-0 max-w-[58ch] whitespace-pre-wrap break-words text-pretty text-[15px] leading-relaxed text-zinc-800 [overflow-wrap:anywhere]">
       {parts.map((part, index) => {
-        if (!/^https?:\/\//i.test(part)) return part;
-        const url = part.replace(/[),.!?]+$/, "");
-        const trailing = part.slice(url.length);
+        if (!part) return null;
+        if (/^https?:\/\//i.test(part)) {
+          return <ExternalLink key={index} url={part} />;
+        }
+        const token = trimEntity(part);
+        if (!token) return part;
+        const trailing = part.slice(token.length);
+        const entity = renderEntity(token);
+        if (!entity) return part;
         return (
           <span key={index}>
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-brand underline decoration-brand/30 underline-offset-2 hover:decoration-brand"
-            >
-              {url.replace(/^https?:\/\//, "").replace(/\/$/, "")}
-            </a>
+            {entity}
             {trailing}
           </span>
         );
       })}
     </p>
   );
+}
+
+function ExternalLink({ url }: { url: string }) {
+  const clean = trimEntity(url);
+  const trailing = url.slice(clean.length);
+  return (
+    <span>
+      <a
+        href={clean}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="text-brand underline decoration-brand/30 underline-offset-2 hover:decoration-brand"
+      >
+        {clean.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+      </a>
+      {trailing}
+    </span>
+  );
+}
+
+function ProfileMention({ pubkey }: { pubkey: string }) {
+  return (
+    <Link to="/profile" search={{ pubkey }} className="font-medium text-brand hover:underline">
+      @{shortNpub(pubkey)}
+    </Link>
+  );
+}
+
+function renderEntity(token: string) {
+  const raw = token.replace(/^nostr:/i, "").toLowerCase();
+  try {
+    const decoded = nip19.decode(raw);
+    if (decoded.type === "npub") return <ProfileMention pubkey={decoded.data} />;
+    if (decoded.type === "nprofile") return <ProfileMention pubkey={decoded.data.pubkey} />;
+    if (decoded.type === "note" || decoded.type === "nevent" || decoded.type === "naddr") {
+      return (
+        <a
+          href={`https://njump.me/${raw}`}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="font-medium text-brand hover:underline"
+        >
+          Open note ↗
+        </a>
+      );
+    }
+  } catch {
+    // Not a valid bech32 entity — leave the text untouched.
+  }
+  return null;
 }
 
 function MediaGrid({ images, onFailed }: { images: string[]; onFailed: (url: string) => void }) {

@@ -45,26 +45,38 @@ export function pubkeyToNpub(pubkey: string) {
   }
 }
 
-export function normalizePubkey(input: string): string | null {
-  const value = input.trim().replace(/^nostr:/i, "");
-  if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
-  if (value.startsWith("npub1")) {
-    try {
-      const decoded = nip19.decode(value);
-      if (decoded.type === "npub") return decoded.data;
-    } catch {
-      return null;
+export type ProfilePointer = {
+  pubkey: string;
+  /** Relay hints carried by an nprofile, when present. */
+  relays: string[];
+};
+
+/**
+ * Accept a hex key, npub or nprofile — including `nostr:` URIs and links that
+ * contain one (for example https://njump.me/nprofile1…).
+ */
+export function parseProfilePointer(input: string): ProfilePointer | null {
+  const value = input.trim();
+  if (!value) return null;
+  if (/^[0-9a-f]{64}$/i.test(value)) return { pubkey: value.toLowerCase(), relays: [] };
+
+  const match = value.match(/(?:nostr:)?(?:npub|nprofile)1[0-9a-z]+/i);
+  if (!match) return null;
+  const token = match[0].replace(/^nostr:/i, "").toLowerCase();
+  try {
+    const decoded = nip19.decode(token);
+    if (decoded.type === "npub") return { pubkey: decoded.data, relays: [] };
+    if (decoded.type === "nprofile") {
+      return { pubkey: decoded.data.pubkey, relays: decoded.data.relays ?? [] };
     }
-  }
-  if (value.startsWith("nprofile1")) {
-    try {
-      const decoded = nip19.decode(value);
-      if (decoded.type === "nprofile") return decoded.data.pubkey;
-    } catch {
-      return null;
-    }
+  } catch {
+    return null;
   }
   return null;
+}
+
+export function normalizePubkey(input: string): string | null {
+  return parseProfilePointer(input)?.pubkey ?? null;
 }
 
 export function emptyProfile(pubkey: string): Profile {

@@ -9,8 +9,7 @@ import { Crown, Users, Zap } from "lucide-react";
 export function CreatorToolsHero({ compact = false }: { compact?: boolean }) {
   const ui = useUI();
   const nostr = useNostr();
-  const profile = nostr.account?.profile;
-  const lud16 = profile?.lud16 ?? profile?.lud06;
+  const lud16 = nostr.wallet.address;
   const signedIn = !!nostr.account;
 
   return (

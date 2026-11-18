@@ -10,6 +10,7 @@ import {
   Loader2,
   RefreshCw,
   Wallet,
+  Copy,
 } from "lucide-react";
 import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
@@ -37,11 +38,27 @@ function WalletPage() {
   const price = useBtcPrice();
   const [transactions, setTransactions] = useState<NwcTransaction[]>([]);
   const [loadingTx, setLoadingTx] = useState(false);
+  const [savingAddress, setSavingAddress] = useState(false);
 
   const wallet = nostr.wallet;
   const balance = wallet.balanceSats;
-  // Derived from the Nostr profile, so receiving never needs a separate wallet.
-  const address = wallet.address ?? nostr.account?.profile.lud16 ?? nostr.account?.profile.lud06;
+  // Derived at login from the Nostr identity, so receiving never needs a
+  // separate wallet connection.
+  const address = wallet.address;
+  const hostedAddress = wallet.addressSource === "hosted";
+
+  const saveAddress = async () => {
+    if (!address) return;
+    setSavingAddress(true);
+    try {
+      await nostr.updateProfile({ lud16: address });
+      toast.success("Lightning address saved to your profile");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't save the address.");
+    } finally {
+      setSavingAddress(false);
+    }
+  };
 
   const loadTransactions = useCallback(async () => {
     if (!wallet.connected) return;
@@ -81,7 +98,7 @@ function WalletPage() {
                 </span>
               ) : address ? (
                 <span className="rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">
-                  Receive-only
+                  {hostedAddress ? "npub.cash" : "Receive-only"}
                 </span>
               ) : null}
             </div>
@@ -103,9 +120,13 @@ function WalletPage() {
                   {price ? "USD · live pricestr feed" : "· waiting for the BTC price"}
                 </>
               ) : address ? (
-                "Receiving is ready — add a wallet to send sats."
+                hostedAddress ? (
+                  "Receiving at your npub.cash address — claim sats with your Nostr key."
+                ) : (
+                  "Receiving is ready — add a wallet to send sats."
+                )
               ) : (
-                "Add a Lightning address to your profile to get paid."
+                "Sign in to derive a wallet from your Nostr identity."
               )}
             </p>
             <div className="mt-6 flex flex-wrap gap-2.5">
@@ -120,15 +141,9 @@ function WalletPage() {
             {address ? (
               <>
                 <div className="grid size-40 place-items-center rounded-xl bg-white p-3">
-                  {address.includes("@") ? (
-                    <div className="grid h-full w-full place-items-center rounded-lg bg-gradient-to-br from-amber-200 to-orange-300 text-center text-[11px] font-semibold text-amber-900">
-                      {address}
-                    </div>
-                  ) : (
-                    <QRCodeSVG value={address} size={136} level="M" />
-                  )}
+                  <QRCodeSVG value={`lightning:${address}`} size={136} level="M" />
                 </div>
-                <p className="mt-3 max-w-[180px] truncate text-center font-mono text-[10.5px] text-zinc-400">
+                <p className="mt-3 max-w-[190px] break-all text-center font-mono text-[10.5px] text-zinc-400">
                   {address}
                 </p>
                 <button
@@ -136,30 +151,35 @@ function WalletPage() {
                     void navigator.clipboard.writeText(address);
                     toast.success("Lightning address copied");
                   }}
-                  className="mt-1 text-[10.5px] font-semibold text-amber-300 hover:underline"
+                  className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-300 hover:underline"
                 >
-                  Copy lightning address
+                  <Copy className="size-2.5" /> Copy lightning address
                 </button>
+                {hostedAddress && nostr.account && (
+                  <button
+                    onClick={() => void saveAddress()}
+                    disabled={savingAddress}
+                    className="mt-1 text-[10.5px] font-semibold text-zinc-400 hover:text-zinc-200 disabled:opacity-50"
+                  >
+                    {savingAddress ? "Saving…" : "Use on my profile"}
+                  </button>
+                )}
               </>
             ) : (
               <div className="px-2 py-6 text-center">
                 <Wallet className="mx-auto size-8 text-zinc-500" />
                 <p className="mt-2 text-[11.5px] text-zinc-400">
-                  {wallet.connected
-                    ? "Add a Lightning address to your profile so anyone can zap you."
-                    : nostr.account
-                      ? "Add a Lightning address to your profile, or connect a wallet to create invoices."
-                      : "Sign in to receive zaps with your Nostr identity."}
+                  {nostr.account
+                    ? "Your Lightning address is being derived from your Nostr key."
+                    : "Sign in to derive a Lightning wallet from your Nostr identity."}
                 </p>
                 <button
                   onClick={() =>
-                    nostr.account
-                      ? ui.openReceive()
-                      : ui.openAuth({ intent: "connect your wallet" })
+                    nostr.account ? ui.openReceive() : ui.openAuth({ intent: "open your wallet" })
                   }
                   className="mt-3 rounded-full bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-white ring-1 ring-white/20 hover:bg-white/20"
                 >
-                  {nostr.account ? "Add a Lightning address" : "Sign in"}
+                  {nostr.account ? "Receive sats" : "Sign in"}
                 </button>
               </div>
             )}
@@ -175,7 +195,9 @@ function WalletPage() {
             wallet.connected
               ? (wallet.alias ?? "Connected")
               : address
-                ? "Receive-only"
+                ? hostedAddress
+                  ? "npub.cash"
+                  : "Receive-only"
                 : "Not connected"
           }
         />
@@ -211,7 +233,9 @@ function WalletPage() {
         </header>
         {!wallet.connected ? (
           <p className="px-5 py-8 text-center text-[12.5px] text-zinc-500">
-            Connect a Nostr Wallet Connect wallet to see your payment history.
+            {address
+              ? "You can receive sats at your Lightning address. Connect a NIP-47 wallet to see payment history and send sats."
+              : "Sign in to derive your wallet from your Nostr identity."}
           </p>
         ) : transactions.length === 0 ? (
           <p className="px-5 py-8 text-center text-[12.5px] text-zinc-500">

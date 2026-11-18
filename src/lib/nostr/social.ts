@@ -8,6 +8,7 @@ import {
 import { getSatoshisAmountFromBolt11 } from "nostr-tools/nip57";
 import { queryEvents, queryEventsMany, publishEvent, getRelayList } from "./relays";
 import { emptyProfile, fetchProfiles, type Profile } from "./profiles";
+import { getPreferences } from "@/lib/preferences";
 import type { AppSigner } from "./signer";
 
 export type NoteCounts = {
@@ -230,7 +231,9 @@ export async function fetchFeed(options: FeedOptions = {}): Promise<FeedNote[]> 
 
   const events = (await queryEvents(filter, { timeout: options.timeout ?? 5000 }))
     .filter(
-      (event) => (options.includeReplies || !noteIsReply(event)) && !looksLikeSpam(event.content),
+      (event) =>
+        (options.includeReplies || !noteIsReply(event)) &&
+        (!getPreferences().privacy.hideSpam || !looksLikeSpam(event.content)),
     )
     .slice(0, limit);
   if (events.length === 0) return [];

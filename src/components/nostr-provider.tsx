@@ -59,6 +59,11 @@ import { randomHex } from "@/lib/nostr/signer";
 import { uploadBlob, uploadFile as uploadFileToBlossom } from "@/lib/nostr/blossom";
 import { fetchDirectMessages, sendDirectMessage, type DirectMessage } from "@/lib/nostr/dm";
 import { NwcClient, type NwcTransaction } from "@/lib/nostr/nwc";
+import {
+  lightningAddressFor,
+  lightningAddressSource,
+  type LightningAddressSource,
+} from "@/lib/nostr/lightning";
 import { requestZapInvoice } from "@/lib/nostr/zaps";
 
 export type NostrAuthMethod = "passkey" | "nsec" | "bunker" | "nostr-connect" | "nip07";
@@ -78,8 +83,12 @@ export type WalletState = {
   alias?: string;
   network?: string;
   balanceSats: number | null;
-  /** Lightning address (lud16/lud06) derived from the Nostr profile. */
+  /**
+   * Lightning address derived from the Nostr identity: the profile's
+   * lud16/lud06 when present, otherwise the account's npub.cash address.
+   */
   address?: string;
+  addressSource?: LightningAddressSource;
   error?: string;
 };
 
@@ -280,13 +289,16 @@ export function NostrProvider({ children }: { children: ReactNode }) {
           network: info.status === "fulfilled" ? info.value.network : undefined,
           balanceSats: balance.status === "fulfilled" ? balance.value : null,
           address: w.address,
+          addressSource: w.addressSource,
         }));
       } catch (error) {
         if (cancelled) return;
-        setWallet({
+        setWallet((w) => ({
           ...EMPTY_WALLET,
+          address: w.address,
+          addressSource: w.addressSource,
           error: error instanceof Error ? error.message : "Couldn't reconnect your wallet.",
-        });
+        }));
       }
     })();
     return () => {
@@ -294,12 +306,26 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // The Lightning address is derived from the Nostr identity, so receiving
-  // works without connecting a separate wallet.
+  // The Lightning address is derived from the Nostr identity at login, so
+  // receiving works without connecting a separate wallet. Profiles without a
+  // lud16/lud06 fall back to the account's npub.cash address.
   useEffect(() => {
-    const address = account?.profile.lud16 ?? account?.profile.lud06 ?? undefined;
-    setWallet((w) => (w.address === address ? w : { ...w, address }));
-  }, [account?.profile.lud16, account?.profile.lud06]);
+    if (!account) {
+      setWallet((w) =>
+        w.address === undefined && w.addressSource === undefined
+          ? w
+          : { ...w, address: undefined, addressSource: undefined },
+      );
+      return;
+    }
+    const address = lightningAddressFor(account.pubkey, account.profile);
+    const addressSource = lightningAddressSource(account.profile);
+    setWallet((w) =>
+      w.address === address && w.addressSource === addressSource
+        ? w
+        : { ...w, address, addressSource },
+    );
+  }, [account]);
 
   const finishSignIn = useCallback(
     async (stored: StoredSession, signer: AppSigner, prfBacked = false) => {
@@ -571,12 +597,15 @@ export function NostrProvider({ children }: { children: ReactNode }) {
         network: info.status === "fulfilled" ? info.value.network : undefined,
         balanceSats: balance.status === "fulfilled" ? balance.value : null,
         address: w.address,
+        addressSource: w.addressSource,
       }));
     } catch (error) {
-      setWallet({
+      setWallet((w) => ({
         ...EMPTY_WALLET,
+        address: w.address,
+        addressSource: w.addressSource,
         error: error instanceof Error ? error.message : "Couldn't connect that wallet.",
-      });
+      }));
       throw error;
     }
   }, []);
@@ -584,7 +613,11 @@ export function NostrProvider({ children }: { children: ReactNode }) {
   const disconnectWallet = useCallback(async () => {
     walletRef.current = null;
     clearWalletConnection();
-    setWallet((w) => ({ ...EMPTY_WALLET, address: w.address }));
+    setWallet((w) => ({
+      ...EMPTY_WALLET,
+      address: w.address,
+      addressSource: w.addressSource,
+    }));
   }, []);
 
   const refreshBalance = useCallback(async () => {
