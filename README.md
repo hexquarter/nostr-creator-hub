@@ -18,6 +18,37 @@ yarn lint           # eslint
 yarn build          # production build
 ```
 
+## Crays premium payments
+
+Creators pay for Crays premium in sats. Checkout resolves the configured
+Lightning address (or LNURL) into a real BOLT-11 invoice, shows it as a QR, and
+polls the wallet's [LUD-21](https://github.com/lnurl/luds/blob/luds/21.md)
+`verify` endpoint. The badge turns on only after the payment settles — there is
+no "I've paid" button. The same verification unlocks fan memberships and
+single-post purchases, so scanning with any wallet works.
+
+Card on-ramp buttons (Cash App, MoonPay, Spark) sit next to the QR for people
+who don't hold sats yet. Cash App deep-links straight into the invoice; MoonPay
+and Spark open a hosted buy flow and the buyer pays the invoice afterwards.
+
+| Variable                       | Purpose                                                                                                                    |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_CRAYS_LIGHTNING_ADDRESS` | Lightning address (or LNURL) that receives Crays premium. Required — the `crays@npub.cash` fallback cannot issue invoices. |
+| `VITE_CRAYS_MOONPAY_URL`       | Optional MoonPay merchant URL. Defaults to MoonPay's public buy page.                                                      |
+| `VITE_CRAYS_SPARK_URL`         | Optional Spark checkout URL. Defaults to `spark.money`.                                                                    |
+| `VITE_CRAYS_CASHAPP_URL`       | Optional Cash App override. Otherwise the modal deep-links `cash.app/launch/lightning/<invoice>` once an invoice exists.   |
+
+Set these at build time (for GitHub Pages, add them to the workflow `env:` block
+or as repository variables). To create the receiving address, claim a username
+for the Crays npub at [npub.cash](https://npub.cash) (or use any LNURL-pay
+address) and put it in `VITE_CRAYS_LIGHTNING_ADDRESS`. Until then the modal
+shows a "checkout is almost ready" notice instead of a QR.
+
+The `verify` endpoint is optional per LUD-21. If a wallet doesn't expose one,
+the creator checkout asks the buyer to connect a wallet and pay in one tap,
+which confirms locally; fan purchases keep a clearly-labelled manual unlock for
+those addresses.
+
 ## Deploying to GitHub Pages
 
 The app is a TanStack Start project, but it only needs a static host: every

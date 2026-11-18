@@ -1,4 +1,5 @@
 import type { NostrEvent } from "nostr-tools";
+import { bech32 } from "@scure/base";
 import {
   getSatoshisAmountFromBolt11,
   getZapEndpoint,
@@ -108,6 +109,7 @@ type LnurlPayResponse = {
   metadata?: string;
   tag?: string;
   allowsNostr?: boolean;
+  status?: string;
   reason?: string;
 };
 
@@ -119,22 +121,29 @@ function lightningAddressUrl(address: string) {
   return `https://${domain}/.well-known/lnurlp/${encodeURIComponent(name)}`;
 }
 
+export type PaymentDetails = {
+  invoice: string;
+  /**
+   * LUD-21 verification endpoint, when the wallet exposes one. Polling it lets
+   * the app activate a purchase only after the payment has actually settled.
+   */
+  verifyUrl?: string;
+};
+
 /** Resolve a lightning address or LNURL into a payable BOLT-11 invoice. */
-export async function requestPaymentInvoice(
+export async function requestPaymentDetails(
   destination: string,
   amountSats: number,
-): Promise<string> {
+): Promise<PaymentDetails> {
   const trimmed = destination.trim();
-  if (isLightningInvoice(trimmed)) return trimmed;
+  if (isLightningInvoice(trimmed)) return { invoice: trimmed };
   if (amountSats < 1) throw new Error("Enter an amount in sats.");
 
   let lnurlUrl: string;
   if (trimmed.toLowerCase().startsWith("lnurl1")) {
-    // Decode LNURL bech32 without pulling in another dependency surface.
-    const { bech32 } = await import("@scure/base");
+    // LNURL-pay links are bech32-encoded URLs; decode them before fetching.
     const { words } = bech32.decode(trimmed.toLowerCase() as `${string}1${string}`, 2000);
-    const bytes = bech32.fromWords(words);
-    lnurlUrl = new TextDecoder().decode(Uint8Array.from(bytes));
+    lnurlUrl = new TextDecoder().decode(Uint8Array.from(bech32.fromWords(words)));
   } else {
     lnurlUrl = lightningAddressUrl(trimmed);
   }
@@ -142,6 +151,9 @@ export async function requestPaymentInvoice(
   const metaResponse = await fetch(lnurlUrl);
   if (!metaResponse.ok) throw new Error("We couldn't find that Lightning address.");
   const meta = (await metaResponse.json()) as LnurlPayResponse;
+  if (meta.status === "ERROR") {
+    throw new Error(meta.reason || "That Lightning address isn't available right now.");
+  }
   if (meta.tag && meta.tag !== "payRequest") {
     throw new Error("That Lightning address doesn't accept payments.");
   }
@@ -161,8 +173,33 @@ export async function requestPaymentInvoice(
     headers: { Accept: "application/json" },
   });
   if (!invoiceResponse.ok) throw new Error("The wallet didn't return an invoice.");
-  const invoiceBody = (await invoiceResponse.json()) as { pr?: string; reason?: string };
+  const invoiceBody = (await invoiceResponse.json()) as {
+    pr?: string;
+    reason?: string;
+    verify?: string;
+  };
   if (!invoiceBody.pr)
     throw new Error(invoiceBody.reason || "The wallet didn't return an invoice.");
-  return invoiceBody.pr;
+
+  let verifyUrl: string | undefined;
+  if (invoiceBody.verify) {
+    try {
+      const resolved = new URL(invoiceBody.verify, callback);
+      if (resolved.protocol === "https:" || resolved.protocol === "http:") {
+        verifyUrl = resolved.toString();
+      }
+    } catch {
+      // A malformed verify URL just means no automatic confirmation.
+    }
+  }
+
+  return { invoice: invoiceBody.pr, verifyUrl };
+}
+
+/** Resolve a lightning address or LNURL into a payable BOLT-11 invoice. */
+export async function requestPaymentInvoice(
+  destination: string,
+  amountSats: number,
+): Promise<string> {
+  return (await requestPaymentDetails(destination, amountSats)).invoice;
 }

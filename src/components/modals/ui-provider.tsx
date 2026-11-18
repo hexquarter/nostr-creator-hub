@@ -37,16 +37,18 @@ import {
 import { lightningAddressFor } from "@/lib/nostr/lightning";
 import {
   CREATOR_PASS_ADDRESS,
+  CREATOR_PASS_CONFIGURED,
   CREATOR_PASS_DAYS,
   CREATOR_PASS_USD,
   activateCreatorPass,
+  cardOnramps,
   creatorPassDaysLeft,
   isCreatorPassActive,
   useCreatorPass,
 } from "@/lib/nostr/creator-pass";
 import { hasPasskey, hasWebAuthn } from "@/lib/nostr/passkey";
 import { useBtcPrice, satsToUsd, usdToSats, formatUsd } from "@/lib/nostr/price";
-import { requestPaymentInvoice, isLightningInvoice } from "@/lib/nostr/zaps";
+import { isLightningInvoice, requestPaymentDetails, requestPaymentInvoice } from "@/lib/nostr/zaps";
 import {
   fetchInstagramPost,
   fetchRemoteImage,
@@ -949,6 +951,7 @@ function BadgeModal({
   const [connecting, setConnecting] = useState(false);
   const [paying, setPaying] = useState(false);
   const [invoice, setInvoice] = useState("");
+  const [verifyUrl, setVerifyUrl] = useState("");
   const [creatingInvoice, setCreatingInvoice] = useState(false);
 
   const creator = options.creator;
@@ -973,6 +976,7 @@ function BadgeModal({
     setConnecting(false);
     setPaying(false);
     setInvoice("");
+    setVerifyUrl("");
     setCreatingInvoice(false);
     setMode(options.mode ?? (options.postId ? "post" : "subscribe"));
   }, [open, options.mode, options.postId]);
@@ -1072,7 +1076,9 @@ function BadgeModal({
     try {
       const profile = creatorProfile ?? (await fetchProfile(creator).catch(() => null));
       const address = lightningAddressFor(creator, profile);
-      setInvoice(await requestPaymentInvoice(address, sats));
+      const details = await requestPaymentDetails(address, sats);
+      setInvoice(details.invoice);
+      setVerifyUrl(details.verifyUrl ?? "");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Couldn't create a Lightning invoice.");
     } finally {
@@ -1082,7 +1088,9 @@ function BadgeModal({
 
   const primary = async () => {
     if (invoice) {
-      grantPurchase();
+      // Only wallets without LUD-21 need a manual confirmation; otherwise the
+      // poll below unlocks the moment the invoice settles.
+      if (!verifyUrl) grantPurchase();
       return;
     }
     if (nostr.wallet.connected) {
@@ -1091,6 +1099,40 @@ function BadgeModal({
     }
     await createInvoice();
   };
+
+  // LUD-21: unlock only after the invoice settles, so scanning the QR with any
+  // wallet works without a self-reported "I've paid" step.
+  const grantRef = useRef(grantPurchase);
+  grantRef.current = grantPurchase;
+  useEffect(() => {
+    if (!open || !invoice || !verifyUrl) return;
+    if (owned || (unlocked && buyingPost)) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const deadline = Date.now() + 30 * 60 * 1000;
+    const check = async () => {
+      if (cancelled || Date.now() > deadline) return;
+      try {
+        const response = await fetch(verifyUrl, { headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error("verify failed");
+        const body = (await response.json()) as { settled?: boolean; status?: string };
+        if (cancelled) return;
+        if (body.settled === true) {
+          grantRef.current();
+          return;
+        }
+        if (body.status === "ERROR") return;
+      } catch {
+        // Keep polling through transient failures.
+      }
+      if (!cancelled) timer = window.setTimeout(check, 3000);
+    };
+    timer = window.setTimeout(check, 2500);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [open, invoice, verifyUrl, owned, unlocked, buyingPost]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -1138,6 +1180,7 @@ function BadgeModal({
                   onClick={() => {
                     setMode("post");
                     setInvoice("");
+                    setVerifyUrl("");
                   }}
                   className={`rounded-lg px-3 py-1.5 transition-colors ${
                     buyingPost ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500"
@@ -1149,6 +1192,7 @@ function BadgeModal({
                   onClick={() => {
                     setMode("subscribe");
                     setInvoice("");
+                    setVerifyUrl("");
                   }}
                   className={`rounded-lg px-3 py-1.5 transition-colors ${
                     buyingPost ? "text-zinc-500" : "bg-white text-zinc-900 shadow-sm"
@@ -1232,7 +1276,9 @@ function BadgeModal({
                   </button>
                 </div>
                 <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
-                  After your wallet confirms the payment, tap “I’ve paid” to unlock on this device.
+                  {verifyUrl
+                    ? "This unlocks by itself the moment the payment settles."
+                    : "After your wallet confirms the payment, tap “I’ve paid” to unlock on this device."}
                 </p>
               </div>
             ) : nostr.wallet.connected ? (
@@ -1279,7 +1325,7 @@ function BadgeModal({
               <GhostBtn onClick={onClose}>{invoice ? "Cancel" : "Maybe later"}</GhostBtn>
               <PrimaryBtn
                 className="!bg-amber-500 hover:!bg-amber-600"
-                disabled={paying || creatingInvoice}
+                disabled={paying || creatingInvoice || Boolean(invoice && verifyUrl)}
                 onClick={() => void primary()}
               >
                 {paying || creatingInvoice ? (
@@ -1294,7 +1340,9 @@ function BadgeModal({
                   : creatingInvoice
                     ? "Creating invoice…"
                     : invoice
-                      ? "I’ve paid — unlock"
+                      ? verifyUrl
+                        ? "Waiting for payment…"
+                        : "I’ve paid — unlock"
                       : nostr.wallet.connected
                         ? `${buyingPost ? "Unlock" : "Subscribe"} · ${sats.toLocaleString()} sats`
                         : "Pay with Lightning"}
@@ -1369,47 +1417,114 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
   const pass = useCreatorPass();
   const btc = useBtcPrice();
   const active = isCreatorPassActive(pass);
-  const sats = usdToSats(CREATOR_PASS_USD, btc) ?? CREATOR_PASS_FALLBACK_SATS;
+  const pricedSats = usdToSats(CREATOR_PASS_USD, btc);
+  const liveSats = pricedSats ?? CREATOR_PASS_FALLBACK_SATS;
+  const priced = pricedSats != null;
+  const [quote, setQuote] = useState(liveSats);
   const [invoice, setInvoice] = useState("");
-  const [manual, setManual] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [verifyUrl, setVerifyUrl] = useState("");
+  const [loading, setLoading] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [error, setError] = useState("");
+  const liveSatsRef = useRef(liveSats);
+  liveSatsRef.current = liveSats;
 
+  const loadInvoice = useCallback(async () => {
+    if (!CREATOR_PASS_CONFIGURED) {
+      setInvoice("");
+      setVerifyUrl("");
+      setError("");
+      return;
+    }
+    const amount = liveSatsRef.current;
+    setQuote(amount);
+    setLoading(true);
+    setError("");
+    try {
+      const details = await requestPaymentDetails(CREATOR_PASS_ADDRESS, amount);
+      setInvoice(details.invoice);
+      setVerifyUrl(details.verifyUrl ?? "");
+    } catch (err) {
+      setInvoice("");
+      setVerifyUrl("");
+      setError(err instanceof Error ? err.message : "We couldn't create a Lightning invoice.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Build the invoice as soon as the modal opens so the QR is ready to scan.
   useEffect(() => {
     if (!open) {
       setInvoice("");
-      setManual(false);
-      setBusy(false);
+      setVerifyUrl("");
+      setLoading(false);
+      setPaying(false);
+      setError("");
+      return;
+    }
+    if (active) return;
+    void loadInvoice();
+  }, [open, active, priced, loadInvoice]);
+
+  // LUD-21: poll the wallet's verify endpoint and activate only after the
+  // invoice actually settles, so there is no "I've paid" honor system.
+  useEffect(() => {
+    if (!open || !verifyUrl || active) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const deadline = Date.now() + 30 * 60 * 1000;
+    const check = async () => {
+      if (cancelled || Date.now() > deadline) return;
+      try {
+        const response = await fetch(verifyUrl, { headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error("verify failed");
+        const body = (await response.json()) as { settled?: boolean; status?: string };
+        if (cancelled) return;
+        if (body.settled === true) {
+          activateCreatorPass(quote);
+          toast.success("Payment received — Crays premium is active");
+          onClose();
+          return;
+        }
+        if (body.status === "ERROR") return;
+      } catch {
+        // Keep polling; a transient failure shouldn't cancel the purchase.
+      }
+      if (!cancelled) timer = window.setTimeout(check, 3000);
+    };
+    timer = window.setTimeout(check, 2500);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [open, verifyUrl, active, quote, onClose]);
+
+  const payWithWallet = async () => {
+    setPaying(true);
+    const amount = invoice ? quote : liveSatsRef.current;
+    try {
+      const details = invoice
+        ? { invoice, verifyUrl }
+        : await requestPaymentDetails(CREATOR_PASS_ADDRESS, liveSatsRef.current);
+      if (!invoice) {
+        setQuote(liveSatsRef.current);
+        setInvoice(details.invoice);
+        setVerifyUrl(details.verifyUrl ?? "");
+      }
+      await nostr.payInvoice(details.invoice);
+      // A successful wallet payment is proof enough to activate immediately.
+      activateCreatorPass(amount);
+      toast.success("Payment sent — Crays premium is active");
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "The payment didn't go through.");
+    } finally {
       setPaying(false);
     }
-  }, [open]);
-
-  const pay = async () => {
-    setBusy(true);
-    try {
-      if (nostr.wallet.connected) {
-        const next = await requestPaymentInvoice(CREATOR_PASS_ADDRESS, sats);
-        await nostr.payInvoice(next);
-        activateCreatorPass(sats);
-        toast.success("Crays premium active — you can sell memberships for 30 days");
-        onClose();
-        return;
-      }
-      setInvoice(await requestPaymentInvoice(CREATOR_PASS_ADDRESS, sats));
-    } catch {
-      // Some Lightning addresses can't issue invoices from the browser. Fall
-      // back to paying the address directly from any wallet.
-      setManual(true);
-    } finally {
-      setBusy(false);
-    }
   };
 
-  const confirmPaid = () => {
-    activateCreatorPass(sats);
-    toast.success("Crays premium active — you can sell memberships for 30 days");
-    onClose();
-  };
+  const onramps = cardOnramps(invoice || undefined);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -1448,11 +1563,123 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
                 <span className="text-[14px] font-semibold text-zinc-500"> / month</span>
               </p>
               <p className="text-[11.5px] text-zinc-500">
-                ≈ {sats.toLocaleString()} sats at the live BTC rate · paid in sats over Lightning
+                ≈ {quote.toLocaleString()} sats{priced ? " at the live BTC rate" : ""} · paid in
+                sats over Lightning
               </p>
             </>
           )}
         </div>
+
+        {!active && (
+          <>
+            <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
+              {!CREATOR_PASS_CONFIGURED ? (
+                <>
+                  <p className="text-[12px] font-semibold text-zinc-900">
+                    Checkout is almost ready
+                  </p>
+                  <p className="mx-auto mt-1 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
+                    Crays premium payments aren’t connected yet. Once the Crays Lightning address is
+                    live, this is a QR you can pay in one scan.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-[12px] font-semibold text-zinc-900">
+                    {invoice ? `Scan to pay ${quote.toLocaleString()} sats` : "Lightning checkout"}
+                  </p>
+                  <div className="mx-auto mt-2 grid size-44 place-items-center rounded-xl bg-white p-3 shadow-sm">
+                    {loading ? (
+                      <Loader2 className="size-6 animate-spin text-zinc-300" />
+                    ) : invoice ? (
+                      <QRCodeSVG value={invoice.toUpperCase()} size={152} level="M" />
+                    ) : (
+                      <span className="px-2 text-[11px] leading-relaxed text-zinc-400">
+                        {error ? "We couldn’t create an invoice." : "Preparing your invoice…"}
+                      </span>
+                    )}
+                  </div>
+                  {invoice ? (
+                    <>
+                      <p className="mt-2 text-[12px] font-semibold text-zinc-900">
+                        {formatUsd(CREATOR_PASS_USD)} · {quote.toLocaleString()} sats
+                      </p>
+                      <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
+                        <a href={`lightning:${invoice}`} className="text-brand hover:underline">
+                          Open wallet
+                        </a>
+                        <button
+                          onClick={() => {
+                            void navigator.clipboard.writeText(invoice);
+                            toast.success("Invoice copied");
+                          }}
+                          className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
+                        >
+                          <Copy className="size-3" /> Copy invoice
+                        </button>
+                        <button
+                          onClick={() => void loadInvoice()}
+                          className="text-zinc-600 hover:underline"
+                        >
+                          New invoice
+                        </button>
+                      </div>
+                      <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
+                        {verifyUrl
+                          ? "Crays premium turns on by itself the moment the payment settles."
+                          : "This wallet doesn’t report payments automatically — connect a wallet to pay in one tap."}
+                      </p>
+                      {verifyUrl && (
+                        <p className="mt-1 inline-flex items-center gap-1.5 text-[10.5px] font-semibold text-amber-700">
+                          <Loader2 className="size-3 animate-spin" /> Waiting for payment…
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <p className="mx-auto mt-2 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
+                        {error
+                          ? "Checkout is unavailable right now. Try again in a moment."
+                          : "Creating a Lightning invoice…"}
+                      </p>
+                      {!loading && (
+                        <button
+                          onClick={() => void loadInvoice()}
+                          className="mt-2 text-[11.5px] font-semibold text-brand hover:underline"
+                        >
+                          Try again
+                        </button>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="rounded-xl bg-white p-3 ring-1 ring-zinc-100">
+              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-zinc-500">
+                No sats yet? Pay with a card
+              </p>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                {onramps.map((onramp) => (
+                  <a
+                    key={onramp.id}
+                    href={onramp.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg bg-zinc-50 px-2 py-2 text-center text-[11.5px] font-semibold text-zinc-700 ring-1 ring-zinc-100 transition-colors hover:bg-white hover:ring-amber-200"
+                  >
+                    {onramp.label}
+                  </a>
+                ))}
+              </div>
+              <p className="mt-1.5 text-center text-[10px] leading-relaxed text-zinc-400">
+                Buy sats with a card in a new tab, then pay the Crays invoice.
+              </p>
+            </div>
+          </>
+        )}
+
         <ul className="space-y-1.5 text-[12.5px] text-zinc-700">
           {[
             "Publish members-only posts and articles",
@@ -1467,64 +1694,6 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
             </li>
           ))}
         </ul>
-        {!active && invoice && (
-          <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
-            <p className="text-[12px] font-semibold text-zinc-900">
-              Scan or open in your Lightning wallet
-            </p>
-            <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm">
-              <QRCodeSVG value={invoice.toUpperCase()} size={136} level="M" />
-            </div>
-            <p className="mt-2 text-[12px] font-semibold text-zinc-900">
-              {sats.toLocaleString()} sats · {formatUsd(CREATOR_PASS_USD)}
-            </p>
-            <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
-              <a href={`lightning:${invoice}`} className="text-brand hover:underline">
-                Open wallet
-              </a>
-              <button
-                onClick={() => {
-                  void navigator.clipboard.writeText(invoice);
-                  toast.success("Invoice copied");
-                }}
-                className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
-              >
-                <Copy className="size-3" /> Copy invoice
-              </button>
-            </div>
-            <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
-              After your wallet confirms the payment, tap “I’ve paid” to activate the badge.
-            </p>
-          </div>
-        )}
-        {!active && !invoice && manual && (
-          <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
-            <p className="text-[12px] font-semibold text-zinc-900">
-              Send {sats.toLocaleString()} sats over Lightning
-            </p>
-            <p className="mt-1 text-[11.5px] text-zinc-500">
-              {formatUsd(CREATOR_PASS_USD)} for {CREATOR_PASS_DAYS} days of Crays premium
-            </p>
-            <p className="mt-2 break-all rounded-lg bg-white px-2 py-1.5 font-mono text-[11.5px] text-zinc-800 ring-1 ring-zinc-100">
-              {CREATOR_PASS_ADDRESS}
-            </p>
-            <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
-              <button
-                onClick={() => {
-                  void navigator.clipboard.writeText(CREATOR_PASS_ADDRESS);
-                  toast.success("Lightning address copied");
-                }}
-                className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
-              >
-                <Copy className="size-3" /> Copy address
-              </button>
-            </div>
-            <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
-              Send the amount to this address from any Lightning wallet, then tap “I’ve paid” to
-              activate the badge.
-            </p>
-          </div>
-        )}
         <DialogFooter className="gap-2 sm:justify-between">
           <GhostBtn onClick={onClose}>Close</GhostBtn>
           <div className="flex gap-2">
@@ -1545,31 +1714,18 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
               >
                 Write a post
               </PrimaryBtn>
-            ) : invoice || manual ? (
+            ) : nostr.wallet.connected && invoice ? (
               <PrimaryBtn
                 className="!bg-amber-500 hover:!bg-amber-600"
                 disabled={paying}
-                onClick={() => {
-                  setPaying(true);
-                  confirmPaid();
-                }}
+                onClick={() => void payWithWallet()}
               >
-                <Check className="size-4" /> I’ve paid — activate
+                {paying ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}
+                Pay {quote.toLocaleString()} sats
               </PrimaryBtn>
-            ) : (
-              <PrimaryBtn
-                className="!bg-amber-500 hover:!bg-amber-600"
-                disabled={busy}
-                onClick={() => void pay()}
-              >
-                {busy ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}
-                {busy
-                  ? "Opening…"
-                  : nostr.wallet.connected
-                    ? `Pay ${sats.toLocaleString()} sats`
-                    : "Pay with Lightning"}
-              </PrimaryBtn>
-            )}
+            ) : error ? (
+              <GhostBtn onClick={() => void loadInvoice()}>Try again</GhostBtn>
+            ) : null}
           </div>
         </DialogFooter>
       </DialogContent>

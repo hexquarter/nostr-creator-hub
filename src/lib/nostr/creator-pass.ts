@@ -30,6 +30,52 @@ export const CREATOR_PASS_USD = 50;
 export const CREATOR_PASS_ADDRESS =
   (import.meta.env.VITE_CRAYS_LIGHTNING_ADDRESS as string | undefined)?.trim() || "crays@npub.cash";
 
+/**
+ * False while checkout still points at the placeholder address, which cannot
+ * issue invoices. The modal shows a setup notice instead of pretending a
+ * payment went through.
+ */
+export const CREATOR_PASS_CONFIGURED = Boolean(
+  (import.meta.env.VITE_CRAYS_LIGHTNING_ADDRESS as string | undefined)?.trim(),
+);
+
+export type CardOnramp = {
+  id: "cashapp" | "moonpay" | "spark";
+  label: string;
+  href: string;
+};
+
+/**
+ * Fiat on-ramps for fans who don't hold sats yet. Cash App can open straight
+ * into a Lightning payment once an invoice exists; MoonPay and Spark take a
+ * merchant/widget URL from the Crays account, configured at build time.
+ */
+export function cardOnramps(invoice?: string): CardOnramp[] {
+  const env = import.meta.env;
+  const cashAppOverride = (env.VITE_CRAYS_CASHAPP_URL as string | undefined)?.trim();
+  const moonpay = (env.VITE_CRAYS_MOONPAY_URL as string | undefined)?.trim();
+  const spark = (env.VITE_CRAYS_SPARK_URL as string | undefined)?.trim();
+  return [
+    {
+      id: "cashapp",
+      label: "Cash App",
+      href:
+        cashAppOverride ||
+        (invoice ? `https://cash.app/launch/lightning/${invoice}` : "https://cash.app/"),
+    },
+    {
+      id: "moonpay",
+      label: "MoonPay",
+      href: moonpay || "https://www.moonpay.com/buy/btc",
+    },
+    {
+      id: "spark",
+      label: "Spark",
+      href: spark || "https://spark.money",
+    },
+  ];
+}
+
 const STORAGE_PREFIX = "crays.creator-pass.v2";
 const LEGACY_STORAGE_KEY = "crays.creator-pass.v1";
 const DAY_MS = 24 * 60 * 60 * 1000;
