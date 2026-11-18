@@ -1836,30 +1836,34 @@ function CommandPalette({
           <CommandItem onSelect={() => go("/discover")}>
             <Compass className="size-4" /> Discover
           </CommandItem>
-          <CommandItem onSelect={() => go("/following")}>
-            <Users className="size-4" /> Following
-          </CommandItem>
-          <CommandItem onSelect={() => go("/messages")}>
-            <MessageCircle className="size-4" /> Messages
-          </CommandItem>
-          <CommandItem onSelect={() => go("/notifications")}>
-            <Bell className="size-4" /> Notifications
-          </CommandItem>
-          <CommandItem onSelect={() => go("/bookmarks")}>
-            <Bookmark className="size-4" /> Bookmarks
-          </CommandItem>
-          <CommandItem onSelect={() => go("/premium")}>
-            <Crown className="size-4" /> Creator tools
-          </CommandItem>
-          <CommandItem onSelect={() => go("/wallet")}>
-            <Wallet className="size-4" /> Wallet
-          </CommandItem>
-          <CommandItem onSelect={() => go("/profile")}>
-            <User className="size-4" /> Profile
-          </CommandItem>
-          <CommandItem onSelect={() => go("/settings")}>
-            <Cog className="size-4" /> Settings
-          </CommandItem>
+          {ui.user && (
+            <>
+              <CommandItem onSelect={() => go("/following")}>
+                <Users className="size-4" /> Following
+              </CommandItem>
+              <CommandItem onSelect={() => go("/messages")}>
+                <MessageCircle className="size-4" /> Messages
+              </CommandItem>
+              <CommandItem onSelect={() => go("/notifications")}>
+                <Bell className="size-4" /> Notifications
+              </CommandItem>
+              <CommandItem onSelect={() => go("/bookmarks")}>
+                <Bookmark className="size-4" /> Bookmarks
+              </CommandItem>
+              <CommandItem onSelect={() => go("/premium")}>
+                <Crown className="size-4" /> Creator tools
+              </CommandItem>
+              <CommandItem onSelect={() => go("/wallet")}>
+                <Wallet className="size-4" /> Wallet
+              </CommandItem>
+              <CommandItem onSelect={() => go("/profile")}>
+                <User className="size-4" /> Profile
+              </CommandItem>
+              <CommandItem onSelect={() => go("/settings")}>
+                <Cog className="size-4" /> Settings
+              </CommandItem>
+            </>
+          )}
         </CommandGroup>
         <CommandSeparator />
         <CommandGroup heading="Actions">
@@ -1871,14 +1875,16 @@ function CommandPalette({
           >
             <Pencil className="size-4" /> Write a post
           </CommandItem>
-          <CommandItem
-            onSelect={() => {
-              onOpenChange(false);
-              ui.openImportInstagram();
-            }}
-          >
-            <Camera className="size-4" /> Import from Instagram
-          </CommandItem>
+          {ui.user && (
+            <CommandItem
+              onSelect={() => {
+                onOpenChange(false);
+                ui.openImportInstagram();
+              }}
+            >
+              <Camera className="size-4" /> Import from Instagram
+            </CommandItem>
+          )}
           <CommandItem
             onSelect={() => {
               onOpenChange(false);

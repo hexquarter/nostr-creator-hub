@@ -24,16 +24,16 @@ import { compactNumber } from "@/lib/format";
 import { fetchProfileStats } from "@/lib/nostr/social";
 
 const nav = [
-  { to: "/", icon: Home, label: "Home" },
-  { to: "/discover", icon: Compass, label: "Discover" },
-  { to: "/following", icon: Users, label: "Following" },
-  { to: "/messages", icon: MessageCircle, label: "Messages" },
-  { to: "/notifications", icon: Bell, label: "Notifications" },
-  { to: "/bookmarks", icon: Bookmark, label: "Bookmarks" },
-  { to: "/premium", icon: Crown, label: "Creator tools" },
-  { to: "/wallet", icon: Wallet, label: "Wallet" },
-  { to: "/profile", icon: User, label: "Profile" },
-  { to: "/settings", icon: Settings, label: "Settings" },
+  { to: "/", icon: Home, label: "Home", authOnly: false },
+  { to: "/discover", icon: Compass, label: "Discover", authOnly: false },
+  { to: "/following", icon: Users, label: "Following", authOnly: true },
+  { to: "/messages", icon: MessageCircle, label: "Messages", authOnly: true },
+  { to: "/notifications", icon: Bell, label: "Notifications", authOnly: true },
+  { to: "/bookmarks", icon: Bookmark, label: "Bookmarks", authOnly: true },
+  { to: "/premium", icon: Crown, label: "Creator tools", authOnly: true },
+  { to: "/wallet", icon: Wallet, label: "Wallet", authOnly: true },
+  { to: "/profile", icon: User, label: "Profile", authOnly: true },
+  { to: "/settings", icon: Settings, label: "Settings", authOnly: true },
 ] as const;
 
 import logo from "../assets/crays-logo.svg";
@@ -77,7 +77,8 @@ export function LeftSidebar() {
 
       {/* Nav */}
       <nav className="flex-1 space-y-0.5">
-        {nav.map(({ to, icon: Icon, label }) => {
+        {nav.map(({ to, icon: Icon, label, authOnly }) => {
+          if (authOnly && !nostr.account) return null;
           const active = pathname === to || (to !== "/" && pathname.startsWith(to));
           return (
             <Link
@@ -98,17 +99,19 @@ export function LeftSidebar() {
           );
         })}
 
-        {/* Import — always visible, gated for signed-out */}
-        <button
-          onClick={ui.openImportInstagram}
-          className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100/80 hover:text-zinc-900"
-        >
-          <Camera
-            className="size-[18px] shrink-0 text-zinc-400 group-hover:text-zinc-700"
-            strokeWidth={2}
-          />
-          Import from Instagram
-        </button>
+        {/* Import — only meaningful once you have a key to sign the posts */}
+        {nostr.account && (
+          <button
+            onClick={ui.openImportInstagram}
+            className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100/80 hover:text-zinc-900"
+          >
+            <Camera
+              className="size-[18px] shrink-0 text-zinc-400 group-hover:text-zinc-700"
+              strokeWidth={2}
+            />
+            Import from Instagram
+          </button>
+        )}
       </nav>
 
       {/* Auth CTA / Account chip */}
@@ -148,42 +151,46 @@ export function LeftSidebar() {
         )}
 
         {/* Creator stats */}
-        <div className="rounded-xl bg-surface p-4 shadow-card ring-1 ring-black/5">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-              Your activity
-            </h3>
-            <Link to="/profile" className="text-[10px] font-medium text-brand hover:underline">
-              View
-            </Link>
+        {nostr.account && (
+          <div className="rounded-xl bg-surface p-4 shadow-card ring-1 ring-black/5">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                Your activity
+              </h3>
+              <Link to="/profile" className="text-[10px] font-medium text-brand hover:underline">
+                View
+              </Link>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <Stat label="Notes" value={stats ? compactNumber(stats.posts) : "—"} />
+              <Stat label="Followers" value={stats ? compactNumber(stats.followers) : "—"} />
+              <Stat label="Following" value={stats ? compactNumber(stats.following) : "—"} />
+            </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <Stat label="Notes" value={stats ? compactNumber(stats.posts) : "—"} />
-            <Stat label="Followers" value={stats ? compactNumber(stats.followers) : "—"} />
-            <Stat label="Following" value={stats ? compactNumber(stats.following) : "—"} />
-          </div>
-        </div>
+        )}
 
-        <Link
-          to="/wallet"
-          className="flex items-center gap-3 rounded-xl bg-zinc-900 p-3 text-white hover:bg-black"
-        >
-          <div className="grid size-9 place-items-center rounded-lg bg-brand/15 text-brand">
-            <Zap className="size-4" strokeWidth={2.5} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">
-              Balance
-            </p>
-            <p className="truncate text-sm font-semibold">
-              {nostr.wallet.connected
-                ? balance == null
-                  ? "Loading…"
-                  : `${formatSats(balance)} sats`
-                : "Connect wallet"}
-            </p>
-          </div>
-        </Link>
+        {nostr.account && (
+          <Link
+            to="/wallet"
+            className="flex items-center gap-3 rounded-xl bg-zinc-900 p-3 text-white hover:bg-black"
+          >
+            <div className="grid size-9 place-items-center rounded-lg bg-brand/15 text-brand">
+              <Zap className="size-4" strokeWidth={2.5} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">
+                Balance
+              </p>
+              <p className="truncate text-sm font-semibold">
+                {nostr.wallet.connected
+                  ? balance == null
+                    ? "Loading…"
+                    : `${formatSats(balance)} sats`
+                  : "Connect wallet"}
+              </p>
+            </div>
+          </Link>
+        )}
       </div>
     </aside>
   );

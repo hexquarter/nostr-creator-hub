@@ -13,6 +13,7 @@ const right = [{ to: "/notifications", icon: Heart, label: "Activity" }] as cons
 export function MobileNav() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const ui = useUI();
+  const signedIn = !!ui.user;
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-black/5 bg-white/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden">
       <ul className="mx-auto flex max-w-md items-center justify-between px-4 py-2">
@@ -30,31 +31,34 @@ export function MobileNav() {
           </button>
         </li>
 
-        {right.map(({ to, icon: Icon, label }) => (
-          <NavItem key={to} to={to} icon={Icon} label={label} active={pathname === to} />
-        ))}
+        {signedIn &&
+          right.map(({ to, icon: Icon, label }) => (
+            <NavItem key={to} to={to} icon={Icon} label={label} active={pathname === to} />
+          ))}
 
-        <li>
-          <Link
-            to="/profile"
-            aria-label="Profile"
-            className="grid size-11 place-items-center rounded-full"
-          >
-            <span
-              className={`grid place-items-center rounded-full p-[2px] ${
-                pathname === "/profile" ? "bg-brand" : "bg-transparent"
-              }`}
+        {signedIn && (
+          <li>
+            <Link
+              to="/profile"
+              aria-label="Profile"
+              className="grid size-11 place-items-center rounded-full"
             >
-              {ui.user ? (
-                <AvatarTile seed={ui.user.name} size={28} />
-              ) : (
-                <span className="grid size-7 place-items-center rounded-full bg-zinc-100 text-zinc-500">
-                  <User className="size-4" />
-                </span>
-              )}
-            </span>
-          </Link>
-        </li>
+              <span
+                className={`grid place-items-center rounded-full p-[2px] ${
+                  pathname === "/profile" ? "bg-brand" : "bg-transparent"
+                }`}
+              >
+                {ui.user ? (
+                  <AvatarTile seed={ui.user.name} size={28} />
+                ) : (
+                  <span className="grid size-7 place-items-center rounded-full bg-zinc-100 text-zinc-500">
+                    <User className="size-4" />
+                  </span>
+                )}
+              </span>
+            </Link>
+          </li>
+        )}
       </ul>
     </nav>
   );
