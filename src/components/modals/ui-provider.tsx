@@ -1136,7 +1136,7 @@ function BadgeModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-[440px]">
+      <DialogContent className="grid max-h-[92dvh] grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden sm:max-w-[440px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Crown className="size-5 text-amber-500" />
@@ -1157,163 +1157,169 @@ function BadgeModal({
           </DialogDescription>
         </DialogHeader>
 
-        {owned || (unlocked && buyingPost) ? (
-          <div className="rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 p-5 text-center ring-1 ring-emerald-100">
-            <p className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-emerald-700">
-              <Check className="size-3.5" />{" "}
-              {owned ? `Active · ${daysLeft(owned)} days left` : "Unlocked"}
-            </p>
-            <p className="mt-1 text-[15px] font-semibold text-zinc-900">
-              {owned ? `You’re a member of ${name}’s membership` : "You already unlocked this post"}
-            </p>
-            <p className="mt-1 text-[11.5px] text-zinc-500">
-              {owned
-                ? `Paid ${owned.sats.toLocaleString()} sats · no auto-renew`
-                : "One-time purchase · it stays in your library"}
-            </p>
-          </div>
-        ) : (
-          <>
-            {options.postId && (
-              <div className="grid grid-cols-2 gap-1 rounded-xl bg-zinc-100 p-1 text-[12px] font-semibold">
-                <button
-                  onClick={() => {
-                    setMode("post");
-                    setInvoice("");
-                    setVerifyUrl("");
-                  }}
-                  className={`rounded-lg px-3 py-1.5 transition-colors ${
-                    buyingPost ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500"
-                  }`}
-                >
-                  This post · {postSats.toLocaleString()} sats
-                </button>
-                <button
-                  onClick={() => {
-                    setMode("subscribe");
-                    setInvoice("");
-                    setVerifyUrl("");
-                  }}
-                  className={`rounded-lg px-3 py-1.5 transition-colors ${
-                    buyingPost ? "text-zinc-500" : "bg-white text-zinc-900 shadow-sm"
-                  }`}
-                >
-                  Membership · {subscriptionSats.toLocaleString()} sats
-                </button>
-              </div>
-            )}
-            <div className="rounded-xl bg-gradient-to-br from-amber-50 to-orange-50 p-5 text-center ring-1 ring-amber-100">
-              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">
-                {buyingPost ? "Single post · forever" : `Membership · ${BADGE_DAYS} days`}
+        <div className="min-h-0 space-y-3 overflow-y-auto overscroll-contain pr-1">
+          {owned || (unlocked && buyingPost) ? (
+            <div className="rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 p-5 text-center ring-1 ring-emerald-100">
+              <p className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-emerald-700">
+                <Check className="size-3.5" />{" "}
+                {owned ? `Active · ${daysLeft(owned)} days left` : "Unlocked"}
               </p>
-              <p className="mt-1 text-[32px] font-bold tracking-tight text-zinc-900">
-                {sats.toLocaleString()} sats
+              <p className="mt-1 text-[15px] font-semibold text-zinc-900">
+                {owned
+                  ? `You’re a member of ${name}’s membership`
+                  : "You already unlocked this post"}
               </p>
-              <p className="text-[11.5px] text-zinc-500">
-                {usd != null ? `≈ ${formatUsd(usd)} · ` : ""}paid directly to {name} over Lightning
+              <p className="mt-1 text-[11.5px] text-zinc-500">
+                {owned
+                  ? `Paid ${owned.sats.toLocaleString()} sats · no auto-renew`
+                  : "One-time purchase · it stays in your library"}
               </p>
-              {!buyingPost && members != null && members > 0 && (
-                <p className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-white/70 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800">
-                  <Users className="size-3" /> {members} member{members === 1 ? "" : "s"} already in
-                </p>
-              )}
             </div>
-            <ul className="space-y-1.5 text-[12.5px] text-zinc-600">
-              {buyingPost ? (
-                <>
-                  <li className="flex gap-2">
-                    <Check className="size-4 shrink-0 text-emerald-500" /> This post, unlocked for
-                    good
-                  </li>
-                  <li className="flex gap-2">
-                    <Check className="size-4 shrink-0 text-emerald-500" /> Full text and images
-                  </li>
-                  <li className="flex gap-2">
-                    <Check className="size-4 shrink-0 text-emerald-500" /> No membership needed
-                  </li>
-                </>
-              ) : (
-                <>
-                  <li className="flex gap-2">
-                    <Check className="size-4 shrink-0 text-emerald-500" /> Every members-only post
-                    from {name}
-                  </li>
-                  <li className="flex gap-2">
-                    <Check className="size-4 shrink-0 text-emerald-500" /> Full text, images and
-                    long-form articles
-                  </li>
-                  <li className="flex gap-2">
-                    <Check className="size-4 shrink-0 text-emerald-500" /> No auto-renew — buy again
-                    only if you want
-                  </li>
-                </>
-              )}
-            </ul>
-
-            {invoice ? (
-              <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
-                <p className="text-[12px] font-semibold text-zinc-900">
-                  Scan or open in your Lightning wallet
-                </p>
-                <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm">
-                  <QRCodeSVG value={invoice.toUpperCase()} size={136} level="M" />
-                </div>
-                <p className="mt-2 text-[12px] font-semibold text-zinc-900">
-                  {sats.toLocaleString()} sats
-                </p>
-                <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
-                  <a href={`lightning:${invoice}`} className="text-brand hover:underline">
-                    Open wallet
-                  </a>
+          ) : (
+            <>
+              {options.postId && (
+                <div className="grid grid-cols-2 gap-1 rounded-xl bg-zinc-100 p-1 text-[12px] font-semibold">
                   <button
                     onClick={() => {
-                      void navigator.clipboard.writeText(invoice);
-                      toast.success("Invoice copied");
+                      setMode("post");
+                      setInvoice("");
+                      setVerifyUrl("");
                     }}
-                    className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
+                    className={`rounded-lg px-3 py-1.5 transition-colors ${
+                      buyingPost ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500"
+                    }`}
                   >
-                    <Copy className="size-3" /> Copy invoice
+                    This post · {postSats.toLocaleString()} sats
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMode("subscribe");
+                      setInvoice("");
+                      setVerifyUrl("");
+                    }}
+                    className={`rounded-lg px-3 py-1.5 transition-colors ${
+                      buyingPost ? "text-zinc-500" : "bg-white text-zinc-900 shadow-sm"
+                    }`}
+                  >
+                    Membership · {subscriptionSats.toLocaleString()} sats
                   </button>
                 </div>
-                <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
-                  {verifyUrl
-                    ? "This unlocks by itself the moment the payment settles."
-                    : "After your wallet confirms the payment, tap “I’ve paid” to unlock on this device."}
+              )}
+              <div className="rounded-xl bg-gradient-to-br from-amber-50 to-orange-50 p-5 text-center ring-1 ring-amber-100">
+                <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">
+                  {buyingPost ? "Single post · forever" : `Membership · ${BADGE_DAYS} days`}
                 </p>
+                <p className="mt-1 text-[32px] font-bold tracking-tight text-zinc-900">
+                  {sats.toLocaleString()} sats
+                </p>
+                <p className="text-[11.5px] text-zinc-500">
+                  {usd != null ? `≈ ${formatUsd(usd)} · ` : ""}paid directly to {name} over
+                  Lightning
+                </p>
+                {!buyingPost && members != null && members > 0 && (
+                  <p className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-white/70 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800">
+                    <Users className="size-3" /> {members} member{members === 1 ? "" : "s"} already
+                    in
+                  </p>
+                )}
               </div>
-            ) : nostr.wallet.connected ? (
-              <p className="rounded-lg bg-zinc-50 px-3 py-2 text-[11.5px] text-zinc-500 ring-1 ring-zinc-100">
-                Paying with {nostr.wallet.alias ?? "your connected wallet"}. Crays never holds the
-                sats.
-              </p>
-            ) : (
-              <div className="rounded-xl border border-zinc-200 p-3">
-                <p className="text-[12px] font-semibold text-zinc-900">
-                  Pay with any Lightning wallet
-                </p>
-                <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
-                  Tap “Pay with Lightning” below for an invoice you can scan or open in any wallet.
-                  Or connect a NIP-47 wallet to pay in one tap.
-                </p>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <input
-                    value={nwcUri}
-                    onChange={(e) => setNwcUri(e.target.value)}
-                    placeholder="nostr+walletconnect://…"
-                    className={`${inputCls} min-w-0 flex-1 font-mono text-[11px]`}
-                  />
-                  <PrimaryBtn
-                    className="!px-3 !py-2 !text-[12px]"
-                    disabled={!nwcUri.trim() || connecting}
-                    onClick={() => void connect()}
-                  >
-                    {connecting ? <Loader2 className="size-4 animate-spin" /> : "Connect"}
-                  </PrimaryBtn>
+              <ul className="space-y-1.5 text-[12.5px] text-zinc-600">
+                {buyingPost ? (
+                  <>
+                    <li className="flex gap-2">
+                      <Check className="size-4 shrink-0 text-emerald-500" /> This post, unlocked for
+                      good
+                    </li>
+                    <li className="flex gap-2">
+                      <Check className="size-4 shrink-0 text-emerald-500" /> Full text and images
+                    </li>
+                    <li className="flex gap-2">
+                      <Check className="size-4 shrink-0 text-emerald-500" /> No membership needed
+                    </li>
+                  </>
+                ) : (
+                  <>
+                    <li className="flex gap-2">
+                      <Check className="size-4 shrink-0 text-emerald-500" /> Every members-only post
+                      from {name}
+                    </li>
+                    <li className="flex gap-2">
+                      <Check className="size-4 shrink-0 text-emerald-500" /> Full text, images and
+                      long-form articles
+                    </li>
+                    <li className="flex gap-2">
+                      <Check className="size-4 shrink-0 text-emerald-500" /> No auto-renew — buy
+                      again only if you want
+                    </li>
+                  </>
+                )}
+              </ul>
+
+              {invoice ? (
+                <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
+                  <p className="text-[12px] font-semibold text-zinc-900">
+                    Scan or open in your Lightning wallet
+                  </p>
+                  <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm">
+                    <QRCodeSVG value={invoice.toUpperCase()} size={136} level="M" />
+                  </div>
+                  <p className="mt-2 text-[12px] font-semibold text-zinc-900">
+                    {sats.toLocaleString()} sats
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
+                    <a href={`lightning:${invoice}`} className="text-brand hover:underline">
+                      Open wallet
+                    </a>
+                    <button
+                      onClick={() => {
+                        void navigator.clipboard.writeText(invoice);
+                        toast.success("Invoice copied");
+                      }}
+                      className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
+                    >
+                      <Copy className="size-3" /> Copy invoice
+                    </button>
+                  </div>
+                  <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
+                    {verifyUrl
+                      ? "This unlocks by itself the moment the payment settles."
+                      : "After your wallet confirms the payment, tap “I’ve paid” to unlock on this device."}
+                  </p>
                 </div>
-              </div>
-            )}
-          </>
-        )}
+              ) : nostr.wallet.connected ? (
+                <p className="rounded-lg bg-zinc-50 px-3 py-2 text-[11.5px] text-zinc-500 ring-1 ring-zinc-100">
+                  Paying with {nostr.wallet.alias ?? "your connected wallet"}. Crays never holds the
+                  sats.
+                </p>
+              ) : (
+                <div className="rounded-xl border border-zinc-200 p-3">
+                  <p className="text-[12px] font-semibold text-zinc-900">
+                    Pay with any Lightning wallet
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
+                    Tap “Pay with Lightning” below for an invoice you can scan or open in any
+                    wallet. Or connect a NIP-47 wallet to pay in one tap.
+                  </p>
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                    <input
+                      value={nwcUri}
+                      onChange={(e) => setNwcUri(e.target.value)}
+                      placeholder="nostr+walletconnect://…"
+                      className={`${inputCls} min-w-0 flex-1 font-mono text-[11px]`}
+                    />
+                    <PrimaryBtn
+                      className="!px-3 !py-2 !text-[12px]"
+                      disabled={!nwcUri.trim() || connecting}
+                      onClick={() => void connect()}
+                    >
+                      {connecting ? <Loader2 className="size-4 animate-spin" /> : "Connect"}
+                    </PrimaryBtn>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
 
         <DialogFooter>
           {owned || (unlocked && buyingPost) ? (
@@ -1528,7 +1534,7 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-[460px]">
+      <DialogContent className="grid max-h-[92dvh] grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Crown className="size-5 text-amber-500" />
@@ -1539,9 +1545,9 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
             readers pay you directly over Lightning.
           </DialogDescription>
         </DialogHeader>
-        <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50 p-5 text-center ring-1 ring-amber-100">
+        <div className="min-h-0 space-y-3 overflow-y-auto overscroll-contain pr-1">
           {active && pass ? (
-            <>
+            <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50 p-4 text-center ring-1 ring-amber-100">
               <p className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-emerald-700">
                 <Check className="size-3.5" /> Active · {creatorPassDaysLeft(pass)} days left
               </p>
@@ -1552,148 +1558,153 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
                 {formatUsd(CREATOR_PASS_USD)} / month · renew anytime to add {CREATOR_PASS_DAYS}{" "}
                 days
               </p>
-            </>
+            </div>
           ) : (
+            <div className="flex items-center justify-between gap-3 rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50 px-4 py-2.5 ring-1 ring-amber-100">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+                  Crays premium · {CREATOR_PASS_DAYS} days
+                </p>
+                <p className="text-[22px] font-bold leading-tight tracking-tight text-zinc-900">
+                  {formatUsd(CREATOR_PASS_USD)}
+                  <span className="text-[12px] font-semibold text-zinc-500"> / month</span>
+                </p>
+              </div>
+              <p className="text-right text-[10.5px] leading-snug text-zinc-500">
+                ≈ {quote.toLocaleString()} sats
+                <br />
+                {priced ? "at the live BTC rate" : "estimated"}
+              </p>
+            </div>
+          )}
+
+          {!active && (
             <>
-              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">
-                Crays premium · {CREATOR_PASS_DAYS} days
-              </p>
-              <p className="mt-1 text-[28px] font-bold tracking-tight text-zinc-900">
-                {formatUsd(CREATOR_PASS_USD)}
-                <span className="text-[14px] font-semibold text-zinc-500"> / month</span>
-              </p>
-              <p className="text-[11.5px] text-zinc-500">
-                ≈ {quote.toLocaleString()} sats{priced ? " at the live BTC rate" : ""} · paid in
-                sats over Lightning
-              </p>
+              <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
+                {!CREATOR_PASS_CONFIGURED ? (
+                  <>
+                    <p className="text-[12px] font-semibold text-zinc-900">
+                      Checkout is almost ready
+                    </p>
+                    <p className="mx-auto mt-1 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
+                      Crays premium payments aren’t connected yet. Once the Crays Lightning address
+                      is live, this is a QR you can pay in one scan.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[12px] font-semibold text-zinc-900">
+                      {invoice
+                        ? `Scan to pay ${quote.toLocaleString()} sats`
+                        : "Lightning checkout"}
+                    </p>
+                    <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm">
+                      {loading ? (
+                        <Loader2 className="size-6 animate-spin text-zinc-300" />
+                      ) : invoice ? (
+                        <QRCodeSVG value={invoice.toUpperCase()} size={136} level="M" />
+                      ) : (
+                        <span className="px-2 text-[11px] leading-relaxed text-zinc-400">
+                          {error ? "We couldn’t create an invoice." : "Preparing your invoice…"}
+                        </span>
+                      )}
+                    </div>
+                    {invoice ? (
+                      <>
+                        <p className="mt-2 text-[12px] font-semibold text-zinc-900">
+                          {formatUsd(CREATOR_PASS_USD)} · {quote.toLocaleString()} sats
+                        </p>
+                        <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
+                          <a href={`lightning:${invoice}`} className="text-brand hover:underline">
+                            Open wallet
+                          </a>
+                          <button
+                            onClick={() => {
+                              void navigator.clipboard.writeText(invoice);
+                              toast.success("Invoice copied");
+                            }}
+                            className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
+                          >
+                            <Copy className="size-3" /> Copy invoice
+                          </button>
+                          <button
+                            onClick={() => void loadInvoice()}
+                            className="text-zinc-600 hover:underline"
+                          >
+                            New invoice
+                          </button>
+                        </div>
+                        <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
+                          {verifyUrl
+                            ? "Crays premium turns on by itself the moment the payment settles."
+                            : "This wallet doesn’t report payments automatically — connect a wallet to pay in one tap."}
+                        </p>
+                        {verifyUrl && (
+                          <p className="mt-1 inline-flex items-center gap-1.5 text-[10.5px] font-semibold text-amber-700">
+                            <Loader2 className="size-3 animate-spin" /> Waiting for payment…
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <p className="mx-auto mt-2 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
+                          {error
+                            ? "Checkout is unavailable right now. Try again in a moment."
+                            : "Creating a Lightning invoice…"}
+                        </p>
+                        {!loading && (
+                          <button
+                            onClick={() => void loadInvoice()}
+                            className="mt-2 text-[11.5px] font-semibold text-brand hover:underline"
+                          >
+                            Try again
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="rounded-xl bg-white p-3 ring-1 ring-zinc-100">
+                <p className="text-[10.5px] font-semibold uppercase tracking-wider text-zinc-500">
+                  No sats yet? Pay with a card
+                </p>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {onramps.map((onramp) => (
+                    <a
+                      key={onramp.id}
+                      href={onramp.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-lg bg-zinc-50 px-2 py-2 text-center text-[11.5px] font-semibold text-zinc-700 ring-1 ring-zinc-100 transition-colors hover:bg-white hover:ring-amber-200"
+                    >
+                      {onramp.label}
+                    </a>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-center text-[10px] leading-relaxed text-zinc-400">
+                  Buy sats with a card in a new tab, then pay the Crays invoice.
+                </p>
+              </div>
             </>
           )}
+
+          <ul className="grid gap-x-3 gap-y-1.5 text-[12px] text-zinc-700 sm:grid-cols-2">
+            {[
+              "Publish members-only posts",
+              "Sell memberships & single posts",
+              "Set your own prices",
+              "See members and earnings",
+              "Passkey sign-in",
+              "Receive zaps to your wallet",
+            ].map((f) => (
+              <li key={f} className="flex gap-1.5">
+                <Check className="size-3.5 shrink-0 text-emerald-500" /> {f}
+              </li>
+            ))}
+          </ul>
         </div>
-
-        {!active && (
-          <>
-            <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
-              {!CREATOR_PASS_CONFIGURED ? (
-                <>
-                  <p className="text-[12px] font-semibold text-zinc-900">
-                    Checkout is almost ready
-                  </p>
-                  <p className="mx-auto mt-1 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
-                    Crays premium payments aren’t connected yet. Once the Crays Lightning address is
-                    live, this is a QR you can pay in one scan.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <p className="text-[12px] font-semibold text-zinc-900">
-                    {invoice ? `Scan to pay ${quote.toLocaleString()} sats` : "Lightning checkout"}
-                  </p>
-                  <div className="mx-auto mt-2 grid size-44 place-items-center rounded-xl bg-white p-3 shadow-sm">
-                    {loading ? (
-                      <Loader2 className="size-6 animate-spin text-zinc-300" />
-                    ) : invoice ? (
-                      <QRCodeSVG value={invoice.toUpperCase()} size={152} level="M" />
-                    ) : (
-                      <span className="px-2 text-[11px] leading-relaxed text-zinc-400">
-                        {error ? "We couldn’t create an invoice." : "Preparing your invoice…"}
-                      </span>
-                    )}
-                  </div>
-                  {invoice ? (
-                    <>
-                      <p className="mt-2 text-[12px] font-semibold text-zinc-900">
-                        {formatUsd(CREATOR_PASS_USD)} · {quote.toLocaleString()} sats
-                      </p>
-                      <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
-                        <a href={`lightning:${invoice}`} className="text-brand hover:underline">
-                          Open wallet
-                        </a>
-                        <button
-                          onClick={() => {
-                            void navigator.clipboard.writeText(invoice);
-                            toast.success("Invoice copied");
-                          }}
-                          className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
-                        >
-                          <Copy className="size-3" /> Copy invoice
-                        </button>
-                        <button
-                          onClick={() => void loadInvoice()}
-                          className="text-zinc-600 hover:underline"
-                        >
-                          New invoice
-                        </button>
-                      </div>
-                      <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
-                        {verifyUrl
-                          ? "Crays premium turns on by itself the moment the payment settles."
-                          : "This wallet doesn’t report payments automatically — connect a wallet to pay in one tap."}
-                      </p>
-                      {verifyUrl && (
-                        <p className="mt-1 inline-flex items-center gap-1.5 text-[10.5px] font-semibold text-amber-700">
-                          <Loader2 className="size-3 animate-spin" /> Waiting for payment…
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <p className="mx-auto mt-2 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
-                        {error
-                          ? "Checkout is unavailable right now. Try again in a moment."
-                          : "Creating a Lightning invoice…"}
-                      </p>
-                      {!loading && (
-                        <button
-                          onClick={() => void loadInvoice()}
-                          className="mt-2 text-[11.5px] font-semibold text-brand hover:underline"
-                        >
-                          Try again
-                        </button>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-
-            <div className="rounded-xl bg-white p-3 ring-1 ring-zinc-100">
-              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-zinc-500">
-                No sats yet? Pay with a card
-              </p>
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                {onramps.map((onramp) => (
-                  <a
-                    key={onramp.id}
-                    href={onramp.href}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-lg bg-zinc-50 px-2 py-2 text-center text-[11.5px] font-semibold text-zinc-700 ring-1 ring-zinc-100 transition-colors hover:bg-white hover:ring-amber-200"
-                  >
-                    {onramp.label}
-                  </a>
-                ))}
-              </div>
-              <p className="mt-1.5 text-center text-[10px] leading-relaxed text-zinc-400">
-                Buy sats with a card in a new tab, then pay the Crays invoice.
-              </p>
-            </div>
-          </>
-        )}
-
-        <ul className="space-y-1.5 text-[12.5px] text-zinc-700">
-          {[
-            "Publish members-only posts and articles",
-            "Sell monthly memberships and single-post unlocks",
-            "Set your prices — fans pay you over Lightning",
-            "See members and members-only posts in your dashboard",
-            "Passkey sign-in — no seed phrase to remember",
-            "Receive zaps straight to your Lightning wallet",
-          ].map((f) => (
-            <li key={f} className="flex gap-2">
-              <Check className="size-4 shrink-0 text-emerald-500" /> {f}
-            </li>
-          ))}
-        </ul>
         <DialogFooter className="gap-2 sm:justify-between">
           <GhostBtn onClick={onClose}>Close</GhostBtn>
           <div className="flex gap-2">
