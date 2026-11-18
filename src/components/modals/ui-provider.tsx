@@ -49,6 +49,7 @@ import {
   type ImportedPost,
 } from "@/lib/instagram";
 import { readInstagramExportFile, type InstagramExport } from "@/lib/instagram-export";
+import { IS_STATIC_HOSTING } from "@/lib/hosting";
 import { base64ToBytes } from "@/lib/crypto";
 import {
   Dialog,
@@ -2886,34 +2887,44 @@ function ImportInstagramModal({ open, onClose }: { open: boolean; onClose: () =>
 
         {step === "connect" && (
           <div className="space-y-3">
-            <Field label="Link to a public post" hint="We fetch the caption and cover image.">
-              <input
-                value={link}
-                onChange={(e) => setLink(e.target.value)}
-                placeholder="https://www.instagram.com/p/…"
-                className={inputCls}
-              />
-            </Field>
-            <GhostBtn
-              className="w-full"
-              disabled={!link.trim() || !!busy}
-              onClick={() => void fetchLink()}
-            >
-              {busy ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" /> {busy}
-                </>
-              ) : (
-                <>
-                  Fetch post <ArrowRight className="size-4" />
-                </>
-              )}
-            </GhostBtn>
+            {IS_STATIC_HOSTING ? (
+              <p className="rounded-xl bg-zinc-50 p-3 text-[11.5px] leading-relaxed text-zinc-500 ring-1 ring-zinc-100">
+                This hosted version runs entirely in your browser, so it can't fetch an Instagram
+                link. Download your Instagram data export and upload it below — captions and photos
+                are imported locally.
+              </p>
+            ) : (
+              <>
+                <Field label="Link to a public post" hint="We fetch the caption and cover image.">
+                  <input
+                    value={link}
+                    onChange={(e) => setLink(e.target.value)}
+                    placeholder="https://www.instagram.com/p/…"
+                    className={inputCls}
+                  />
+                </Field>
+                <GhostBtn
+                  className="w-full"
+                  disabled={!link.trim() || !!busy}
+                  onClick={() => void fetchLink()}
+                >
+                  {busy ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" /> {busy}
+                    </>
+                  ) : (
+                    <>
+                      Fetch post <ArrowRight className="size-4" />
+                    </>
+                  )}
+                </GhostBtn>
 
-            <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-zinc-400">
-              <span className="h-px flex-1 bg-zinc-200" /> or{" "}
-              <span className="h-px flex-1 bg-zinc-200" />
-            </div>
+                <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-zinc-400">
+                  <span className="h-px flex-1 bg-zinc-200" /> or{" "}
+                  <span className="h-px flex-1 bg-zinc-200" />
+                </div>
+              </>
+            )}
 
             <div className="flex items-center justify-between rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-100">
               <div>

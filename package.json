@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "vite build && node scripts/gh-pages-postbuild.mjs",
     "build:dev": "vite build --mode development",
+    "build:pages": "GITHUB_PAGES=true VITE_STATIC_HOSTING=true vite build && node scripts/gh-pages-postbuild.mjs",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write ."

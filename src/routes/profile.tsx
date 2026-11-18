@@ -60,6 +60,9 @@ export const Route = createFileRoute("/profile")({
       { name: "description", content: "A Crays profile — posts, articles, media and zaps." },
     ],
   }),
+  // Deep links carry the target in the query string, which the pre-rendered
+  // HTML can't know. Render client-side only so hydration doesn't mismatch.
+  ssr: false,
   component: Profile,
 });
 
