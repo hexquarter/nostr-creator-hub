@@ -1694,7 +1694,11 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
                             {stablecoin.network}
                           </p>
                           <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm ring-1 ring-zinc-100">
-                            <QRCodeSVG value={stablecoin.address} size={136} level="M" />
+                            <QRCodeSVG
+                              value={stablecoin.uri || stablecoin.address}
+                              size={136}
+                              level="M"
+                            />
                           </div>
                           <p className="mt-2 break-all rounded-lg bg-zinc-50 px-2.5 py-2 text-center font-mono text-[10.5px] leading-relaxed text-zinc-600 ring-1 ring-zinc-100">
                             {stablecoin.address}
@@ -1709,6 +1713,9 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
                             <Copy className="size-3.5" /> Copy address
                           </button>
                           <p className="mt-2 text-[10px] leading-relaxed text-zinc-400">
+                            {stablecoin.uri && stablecoin.uri !== stablecoin.address
+                              ? `Scan with a ${stablecoin.network} wallet to prefill the token and amount, or send ${stablecoin.id.toUpperCase()} manually. `
+                              : ""}
                             Only send {stablecoin.id.toUpperCase()} on {stablecoin.network} to this
                             address. Stablecoin transfers aren’t verified automatically yet.
                           </p>

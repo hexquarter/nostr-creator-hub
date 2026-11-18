@@ -49,7 +49,65 @@ export type CardOnramp = {
   address?: string;
   /** Network the stablecoin must be sent on. */
   network?: string;
+  /**
+   * Canonical payment request for the QR, following the Spark SDK cross-chain
+   * formats (EIP-681, Solana Pay, Tron TRC-20).
+   */
+  uri?: string;
 };
+
+/** Token identifiers from the Spark cross-chain guide's supported routes. */
+const USDC_SOLANA_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const USDT_SOLANA_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+const USDT_TRON_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+
+const isEvmAddress = (address: string) => /^0x[a-fA-F0-9]{40}$/.test(address);
+const isTronAddress = (address: string) => /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address);
+
+/**
+ * Build a wallet-scannable request using the canonical URI formats from the
+ * Spark cross-chain guide:
+ * https://sdk-doc-spark.breez.technology/guide/cross_chain.html
+ *
+ * - EVM: EIP-681 ERC-20 transfer, with the token contract and chain id.
+ * - Solana: Solana Pay, with `spl-token` and the UI amount.
+ * - Tron: TRC-20 form, with `token` and 6-decimal base units.
+ *
+ * Stablecoins use 6 decimals, so $50 is 50_000_000 base units.
+ */
+function stablecoinUri(options: {
+  asset: "USDC" | "USDT";
+  address: string;
+  network?: string;
+  token?: string;
+  chainId?: string;
+  usd: number;
+}): string {
+  const { asset, address, network = "", token, chainId, usd } = options;
+  const baseUnits = Math.round(usd * 1_000_000).toString();
+  const label = network.toLowerCase();
+
+  // Trust the configured network label first; a Solana address can start with
+  // "T" and look like a Tron address, so sniffing alone is ambiguous.
+  const isTron = label.includes("tron") || (!label && isTronAddress(address));
+  const isEvm =
+    isEvmAddress(address) || /(evm|ethereum|base|arbitrum|optimism|polygon|avalanche)/.test(label);
+
+  if (isTron) {
+    const contract = token || (asset === "USDT" ? USDT_TRON_CONTRACT : "");
+    const params = new URLSearchParams({ amount: baseUnits });
+    if (contract) params.set("token", contract);
+    return `tron:${address}?${params.toString()}`;
+  }
+  if (isEvm) {
+    if (!token || !chainId) return address;
+    return `ethereum:${token}@${chainId}/transfer?address=${address}&uint256=${baseUnits}`;
+  }
+  const mint = token || (asset === "USDC" ? USDC_SOLANA_MINT : USDT_SOLANA_MINT);
+  const params = new URLSearchParams({ amount: String(usd) });
+  if (mint) params.set("spl-token", mint);
+  return `solana:${address}?${params.toString()}`;
+}
 
 /**
  * Non-Lightning ways to pay for Crays premium.
@@ -59,18 +117,24 @@ export type CardOnramp = {
  * afterwards. The full SDK widget needs a Breez API key and a native/server
  * runtime, so the static web build deep-links the hosted checkout instead.
  *
- * USDC and USDT are sent directly to the Crays addresses configured at build
- * time. They are stablecoins, so the amount is simply the USD price. A
- * transfer can't be verified from the browser, so the checkout asks the buyer
- * to confirm only after the transfer is sent.
+ * USDC and USDT use the cross-chain receive formats from the Spark SDK guide.
+ * A static site can't call the SDK's `receive_payment` (which returns a
+ * per-quote deposit address and reconciles status in the background), so the
+ * Crays addresses are configured at build time and the QR carries the network,
+ * token and amount. Transfers can't be verified from the browser, so this path
+ * asks the buyer to confirm only after sending.
  */
 export function cardOnramps(usd = CREATOR_PASS_USD): CardOnramp[] {
   const env = import.meta.env;
   const moonpay = (env.VITE_CRAYS_MOONPAY_URL as string | undefined)?.trim();
   const usdc = (env.VITE_CRAYS_USDC_ADDRESS as string | undefined)?.trim();
   const usdcNetwork = (env.VITE_CRAYS_USDC_NETWORK as string | undefined)?.trim() || "Solana";
+  const usdcToken = (env.VITE_CRAYS_USDC_TOKEN as string | undefined)?.trim();
+  const usdcChainId = (env.VITE_CRAYS_USDC_CHAIN_ID as string | undefined)?.trim();
   const usdt = (env.VITE_CRAYS_USDT_ADDRESS as string | undefined)?.trim();
   const usdtNetwork = (env.VITE_CRAYS_USDT_NETWORK as string | undefined)?.trim() || "Tron";
+  const usdtToken = (env.VITE_CRAYS_USDT_TOKEN as string | undefined)?.trim();
+  const usdtChainId = (env.VITE_CRAYS_USDT_CHAIN_ID as string | undefined)?.trim();
   const moonpayPrefill = `https://www.moonpay.com/buy/btc?baseCurrencyAmount=${Math.round(
     usd,
   )}&baseCurrencyCode=usd&defaultCurrencyCode=btc`;
@@ -90,6 +154,14 @@ export function cardOnramps(usd = CREATOR_PASS_USD): CardOnramp[] {
       description: `Send USDC on ${usdcNetwork}.`,
       address: usdc,
       network: usdcNetwork,
+      uri: stablecoinUri({
+        asset: "USDC",
+        address: usdc,
+        network: usdcNetwork,
+        token: usdcToken,
+        chainId: usdcChainId,
+        usd,
+      }),
     });
   }
   if (usdt) {
@@ -99,6 +171,14 @@ export function cardOnramps(usd = CREATOR_PASS_USD): CardOnramp[] {
       description: `Send USDT on ${usdtNetwork}.`,
       address: usdt,
       network: usdtNetwork,
+      uri: stablecoinUri({
+        asset: "USDT",
+        address: usdt,
+        network: usdtNetwork,
+        token: usdtToken,
+        chainId: usdtChainId,
+        usd,
+      }),
     });
   }
   if (!usdc && !usdt) {
