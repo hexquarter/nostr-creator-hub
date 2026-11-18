@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { NostrEvent } from "nostr-tools";
-import { PRICE_RELAYS, pool, queryEvents } from "./relays";
+import { PRICE_RELAYS, pool, queryEvents, warmRelays } from "./relays";
 
 export type BtcPrice = {
   usd: number;
@@ -46,9 +46,11 @@ function start() {
   if (started || typeof window === "undefined") return;
   started = true;
 
+  warmRelays([...PRICE_RELAYS]);
+
   queryEvents(
     { kinds: [30078], "#t": ["pricestr"], limit: 1 },
-    { relays: [...PRICE_RELAYS], timeout: 7000 },
+    { relays: [...PRICE_RELAYS], timeout: 4500 },
   )
     .then((events) => {
       for (const event of events) {

@@ -17,7 +17,7 @@ import {
   toBunkerURL,
 } from "nostr-tools/nip46";
 import { bytesToHex, hexToBytes } from "@/lib/crypto";
-import { getRelayList, pool, publishEvent } from "@/lib/nostr/relays";
+import { getRelayList, pool, publishEvent, warmRelays } from "@/lib/nostr/relays";
 import {
   emptyProfile,
   fetchProfile,
@@ -206,6 +206,9 @@ export function NostrProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (restoreAttempted.current) return;
     restoreAttempted.current = true;
+    // Start the relay handshakes immediately so the first feed query doesn't
+    // pay for them while the user is already looking at the page.
+    warmRelays();
     let cancelled = false;
 
     void (async () => {

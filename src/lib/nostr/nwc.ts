@@ -180,12 +180,12 @@ export class NwcClient {
   }
 
   getInfo() {
-    return this.request<NwcInfo>("get_info", {}, 15000);
+    return this.request<NwcInfo>("get_info", {}, 6000);
   }
 
   /** Wallet balance in sats. */
   async getBalance(): Promise<number> {
-    const result = await this.request<{ balance: number }>("get_balance", {}, 20000);
+    const result = await this.request<{ balance: number }>("get_balance", {}, 8000);
     return Math.floor((result.balance ?? 0) / 1000);
   }
 
@@ -197,7 +197,7 @@ export class NwcClient {
     const result = await this.request<{ transactions?: NwcTransaction[] }>(
       "list_transactions",
       { limit },
-      25000,
+      12000,
     );
     return result.transactions ?? [];
   }

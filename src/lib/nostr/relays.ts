@@ -20,9 +20,23 @@ const RELAYS_STORAGE_KEY = "crays.custom-relays.v1";
 
 export const pool = new SimplePool();
 
+/** Don't hang the whole UI on a relay that never opens its socket. */
+const CONNECT_TIMEOUT = 2200;
+/** Default upper bound for a single query. */
+const DEFAULT_QUERY_TIMEOUT = 2800;
+/** How long a query result is reused before it is fetched again. */
+const CACHE_TTL = 30_000;
+const CACHE_LIMIT = 250;
+
 let customRelays: string[] = [];
 let loaded = false;
 const listeners = new Set<() => void>();
+
+type RelayHandle = Awaited<ReturnType<SimplePool["ensureRelay"]>>;
+
+const connectCache = new Map<string, Promise<RelayHandle | null>>();
+const queryCache = new Map<string, { at: number; ttl: number; events: NostrEvent[] }>();
+const inFlight = new Map<string, Promise<NostrEvent[]>>();
 
 function canUseStorage() {
   return typeof window !== "undefined" && !!window.localStorage;
@@ -83,6 +97,7 @@ export function addRelay(input: string) {
   if (!relay) throw new Error("That doesn't look like a relay URL.");
   if (!customRelays.includes(relay)) {
     customRelays = [...customRelays, relay];
+    invalidateQueries();
     persist();
   }
   return relay;
@@ -90,6 +105,7 @@ export function addRelay(input: string) {
 
 export function removeRelay(relay: string) {
   customRelays = customRelays.filter((r) => r !== relay);
+  invalidateQueries();
   persist();
 }
 
@@ -102,7 +118,142 @@ export function isBrowser() {
   return typeof window !== "undefined";
 }
 
-type QueryOptions = { timeout?: number; relays?: string[] };
+/** Drop cached reads, e.g. right after publishing an event. */
+export function invalidateQueries() {
+  queryCache.clear();
+  inFlight.clear();
+}
+
+function connect(relay: string): Promise<RelayHandle | null> {
+  const cached = connectCache.get(relay);
+  if (cached) return cached;
+  const pending = pool.ensureRelay(relay, { connectionTimeout: CONNECT_TIMEOUT }).catch(() => {
+    connectCache.delete(relay);
+    return null;
+  });
+  connectCache.set(relay, pending);
+  return pending;
+}
+
+/**
+ * Open relay sockets ahead of the first query. Called once when the app boots
+ * so the handshake overlaps with rendering instead of blocking the first feed.
+ */
+export function warmRelays(relays = getRelayList()) {
+  if (!isBrowser()) return;
+  for (const relay of relays) void connect(relay);
+}
+
+function remember(key: string, events: NostrEvent[]) {
+  // An empty result can mean "the relays had nothing" or "every relay was
+  // unreachable", so only trust it for a moment.
+  queryCache.set(key, {
+    at: Date.now(),
+    ttl: events.length === 0 ? 5_000 : CACHE_TTL,
+    events,
+  });
+  if (queryCache.size > CACHE_LIMIT) {
+    const oldest = queryCache.keys().next().value;
+    if (oldest !== undefined) queryCache.delete(oldest);
+  }
+}
+
+type QueryOptions = {
+  timeout?: number;
+  relays?: string[];
+  /** Skip the in-memory cache (used by explicit refresh buttons). */
+  fresh?: boolean;
+};
+
+async function runQuery(relays: string[], filter: Filter, timeout: number): Promise<NostrEvent[]> {
+  if (relays.length === 0) return [];
+
+  return new Promise<NostrEvent[]>((resolve) => {
+    const chunks: NostrEvent[][] = [];
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const subs: Array<{ close: () => void }> = [];
+    let finished = 0;
+    let failed = 0;
+    let settled = false;
+    let grace: ReturnType<typeof setTimeout> | undefined;
+
+    const clearTimers = () => {
+      for (const timer of timers) clearTimeout(timer);
+      timers.clear();
+    };
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (grace) clearTimeout(grace);
+      clearTimers();
+      for (const sub of subs) {
+        try {
+          sub.close();
+        } catch {
+          // relay already gone
+        }
+      }
+      resolve(dedupeEvents(chunks.flat()));
+    };
+
+    // Wait for the two fastest relays instead of the slowest one. Remaining
+    // relays get a short grace period to add anything they have.
+    const needed = Math.min(2, relays.length);
+    const deadline = setTimeout(finish, timeout + 250);
+    timers.add(deadline);
+
+    const maybeFinish = () => {
+      if (settled) return;
+      if (finished + failed >= relays.length) {
+        finish();
+        return;
+      }
+      if (finished >= needed && !grace) {
+        grace = setTimeout(finish, 150);
+      }
+    };
+
+    for (const url of relays) {
+      // Don't wait for every socket: a dead relay must not hold the UI. Each
+      // relay starts its own subscription as soon as it connects.
+      void connect(url).then((relay) => {
+        if (settled) return;
+        if (!relay) {
+          failed += 1;
+          maybeFinish();
+          return;
+        }
+
+        let done = false;
+        const events: NostrEvent[] = [];
+        const settle = () => {
+          if (done) return;
+          done = true;
+          chunks.push(events);
+          finished += 1;
+          maybeFinish();
+        };
+        const timer = setTimeout(settle, timeout);
+        timers.add(timer);
+        try {
+          const sub = relay.subscribe([filter], {
+            onevent(event) {
+              events.push(event);
+            },
+            oneose: settle,
+            onclose: settle,
+          });
+          subs.push(sub);
+        } catch {
+          clearTimeout(timer);
+          timers.delete(timer);
+          settle();
+        }
+      });
+    }
+  });
+}
 
 /** Read events from the relay set, de-duplicated and newest first. */
 export async function queryEvents(
@@ -111,8 +262,24 @@ export async function queryEvents(
 ): Promise<NostrEvent[]> {
   if (!isBrowser()) return [];
   const relays = options.relays ?? getRelayList();
-  const events = await pool.querySync(relays, filter, { maxWait: options.timeout ?? 4500 });
-  return dedupeEvents(events);
+  const key = JSON.stringify([filter, relays]);
+
+  if (!options.fresh) {
+    const hit = queryCache.get(key);
+    if (hit && Date.now() - hit.at < hit.ttl) return hit.events;
+    const running = inFlight.get(key);
+    if (running) return running;
+  }
+
+  const task = runQuery(relays, filter, options.timeout ?? DEFAULT_QUERY_TIMEOUT)
+    .then((events) => {
+      remember(key, events);
+      return events;
+    })
+    .finally(() => inFlight.delete(key));
+
+  inFlight.set(key, task);
+  return task;
 }
 
 /** Run several filters in parallel (e.g. mentions + reactions). */
@@ -152,5 +319,8 @@ export async function publishEvent(
   if (ok.length === 0) {
     throw new Error("Couldn't reach any relay. Check your connection and try again.");
   }
+  // Our own event changed state (follows, profile, bookmarks…), so reads that
+  // were cached before the write must not win.
+  invalidateQueries();
   return { delivered: ok.length, failed: failed.length, relays: ok };
 }

@@ -4,6 +4,7 @@ import { PageShell } from "@/components/page-shell";
 import { useNostr } from "@/components/nostr-provider";
 import { useUI } from "@/components/modals/ui-provider";
 import { fetchNotifications, type NotificationItem } from "@/lib/nostr/social";
+import { invalidateQueries } from "@/lib/nostr/relays";
 import { compactNumber, timeAgo } from "@/lib/format";
 import { Zap, Repeat2, MessageCircle, AtSign, Loader2, Heart, BellOff } from "lucide-react";
 
@@ -79,6 +80,7 @@ function Notifications() {
               ui.openAuth({ intent: "see your notifications" });
               return;
             }
+            invalidateQueries();
             setLoading(true);
             fetchNotifications(pubkey)
               .then(setItems)

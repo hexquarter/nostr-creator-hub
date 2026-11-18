@@ -6,6 +6,7 @@ import { useNostr } from "@/components/nostr-provider";
 import { useUI } from "@/components/modals/ui-provider";
 import { fetchProfiles, type Profile } from "@/lib/nostr/profiles";
 import { fetchFeed, type FeedNote } from "@/lib/nostr/social";
+import { invalidateQueries } from "@/lib/nostr/relays";
 import { UserPlus, Filter, Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/following")({
@@ -76,7 +77,10 @@ function Following() {
       subtitle="Only posts from the creators you follow — no algorithm in the way."
       actions={
         <button
-          onClick={() => void load()}
+          onClick={() => {
+            invalidateQueries();
+            void load();
+          }}
           className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-2 text-[12px] font-semibold text-zinc-700 shadow-card ring-1 ring-black/5 hover:bg-zinc-50"
         >
           {loading ? (

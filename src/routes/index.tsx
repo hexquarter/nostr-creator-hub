@@ -4,6 +4,7 @@ import { Loader2, Sparkles } from "lucide-react";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { RightSidebar } from "@/components/right-sidebar";
 import { Composer } from "@/components/composer";
+import { CreatorToolsHero } from "@/components/creator-tools-hero";
 import { FeaturedCreators } from "@/components/featured-creators";
 import { PostCard, postFromNote } from "@/components/post-card";
 import { MobileNav } from "@/components/mobile-nav";
@@ -11,6 +12,7 @@ import { MobileTopBar } from "@/components/mobile-topbar";
 import { useNostr } from "@/components/nostr-provider";
 import { useUI } from "@/components/modals/ui-provider";
 import { fetchFeed, type FeedNote } from "@/lib/nostr/social";
+import { invalidateQueries } from "@/lib/nostr/relays";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -48,6 +50,7 @@ function Home() {
   const [error, setError] = useState("");
 
   const followingKey = nostr.following.join(",");
+  const signedOut = !nostr.account;
 
   const load = useCallback(
     async (signal?: { cancelled: boolean }) => {
@@ -109,40 +112,67 @@ function Home() {
           <header className="hidden items-end justify-between lg:flex">
             <div>
               <h1 className="text-[26px] font-semibold leading-none tracking-tight text-zinc-900">
-                Home
+                {signedOut ? "Creator tools" : "Home"}
               </h1>
               <p className="mt-1.5 text-[13px] text-zinc-500">
-                {tab === "following"
-                  ? "Only posts from the creators you follow — no algorithm in the way."
-                  : "Live from the Nostr relays, as it happens."}
+                {signedOut
+                  ? "Publish, get paid and grow — on your own keys."
+                  : tab === "following"
+                    ? "Only posts from the creators you follow — no algorithm in the way."
+                    : "Live from the Nostr relays, as it happens."}
               </p>
             </div>
-            <div className="hidden items-center gap-1 rounded-full bg-white p-1 text-[12px] font-medium shadow-card ring-1 ring-black/5 sm:flex">
-              {TABS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => {
-                    if (t.id === "following" && !nostr.account) {
-                      ui.openAuth({ intent: "see the creators you follow" });
-                      return;
-                    }
-                    setTab(t.id);
-                  }}
-                  className={`rounded-full px-3 py-1 transition-colors ${
-                    tab === t.id ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-zinc-900"
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+            {!signedOut && (
+              <div className="hidden items-center gap-1 rounded-full bg-white p-1 text-[12px] font-medium shadow-card ring-1 ring-black/5 sm:flex">
+                {TABS.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      if (t.id === "following" && !nostr.account) {
+                        ui.openAuth({ intent: "see the creators you follow" });
+                        return;
+                      }
+                      setTab(t.id);
+                    }}
+                    className={`rounded-full px-3 py-1 transition-colors ${
+                      tab === t.id ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-zinc-900"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </header>
+
+          {signedOut && <CreatorToolsHero />}
 
           <FeaturedCreators profiles={creators} />
 
-          <div className="hidden lg:block">
-            <Composer />
-          </div>
+          {!signedOut && (
+            <div className="hidden lg:block">
+              <Composer />
+            </div>
+          )}
+
+          {signedOut && (
+            <div className="flex items-end justify-between">
+              <div>
+                <h2 className="text-[17px] font-semibold tracking-tight text-zinc-900">
+                  Public feed
+                </h2>
+                <p className="mt-1 text-[12.5px] text-zinc-500">
+                  Live from the relays — no account needed to read.
+                </p>
+              </div>
+              <button
+                onClick={() => ui.openAuth({ intent: "join the conversation" })}
+                className="rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black"
+              >
+                Join Crays
+              </button>
+            </div>
+          )}
 
           {loading ? (
             <LoadingFeed />
@@ -151,7 +181,10 @@ function Home() {
               title="Relays are being slow"
               body={error}
               actionLabel="Try again"
-              onAction={() => void load()}
+              onAction={() => {
+                invalidateQueries();
+                void load();
+              }}
             />
           ) : notes.length === 0 ? (
             <EmptyState
