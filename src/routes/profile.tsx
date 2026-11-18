@@ -14,8 +14,16 @@ import {
 } from "@/lib/nostr/profiles";
 import { compactNumber } from "@/lib/format";
 import {
+  BADGE_DAYS,
+  badgePriceFromNotes,
+  daysLeft,
+  isBadgeActive,
+  useCreatorBadges,
+} from "@/lib/nostr/badges";
+import {
   BadgeCheck,
   Calendar,
+  Crown,
   Link as LinkIcon,
   MapPin,
   Settings as SettingsIcon,
@@ -143,6 +151,8 @@ function Profile() {
     return notes;
   }, [notes, tab]);
 
+  const badges = useCreatorBadges();
+
   if (!pubkey) {
     return (
       <PageShell title="Profile" subtitle="Public face of your sovereign identity.">
@@ -172,6 +182,8 @@ function Profile() {
   const banner = profile?.banner;
   const zapsEarned = notes.reduce((sum, note) => sum + note.counts.zapSats, 0);
   const following = nostr.isFollowing(pubkey);
+  const badgePrice = badgePriceFromNotes(notes);
+  const ownedBadge = badges.find((badge) => badge.creator === pubkey && isBadgeActive(badge));
 
   const toggleFollow = async () => {
     if (!ui.requireAuth("follow creators")) return;
@@ -215,6 +227,27 @@ function Profile() {
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {badgePrice != null && !isOwn && (
+                <button
+                  onClick={() => ui.openBadge({ creator: pubkey, name, sats: badgePrice })}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12px] font-semibold transition-colors ${
+                    ownedBadge
+                      ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
+                      : "bg-amber-500 text-white shadow-card hover:bg-amber-600"
+                  }`}
+                >
+                  <Crown className="size-3.5" />
+                  {ownedBadge
+                    ? `Badge · ${daysLeft(ownedBadge)}d left`
+                    : `Creator badge · ${compactNumber(badgePrice)} sats`}
+                </button>
+              )}
+              {isOwn && badgePrice != null && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 ring-1 ring-amber-100">
+                  <Crown className="size-3.5" /> Badge · {compactNumber(badgePrice)} sats /{" "}
+                  {BADGE_DAYS}d
+                </span>
+              )}
               <button
                 onClick={() => ui.openZap({ recipient: name, pubkey })}
                 className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 hover:bg-amber-100"

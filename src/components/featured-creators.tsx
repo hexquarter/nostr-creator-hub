@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { AvatarTile } from "./avatar-tile";
 import type { Profile } from "@/lib/nostr/profiles";
 
@@ -11,10 +12,13 @@ export function FeaturedCreators({ profiles }: { profiles: Profile[] }) {
       {profiles.map((profile, i) => {
         const name = profile.displayName || profile.name || profile.handle;
         return (
-          <button
+          <Link
             key={profile.pubkey}
-            className="group shrink-0 text-center transition-transform hover:-translate-y-0.5"
+            to="/profile"
+            search={{ pubkey: profile.pubkey }}
+            className="group shrink-0 rounded-2xl text-center transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
             title={name}
+            aria-label={`Open ${name}'s profile`}
           >
             <div
               className={`relative mb-2 rounded-2xl p-0.5 ${
@@ -36,7 +40,7 @@ export function FeaturedCreators({ profiles }: { profiles: Profile[] }) {
             <p className="max-w-[64px] truncate text-[10.5px] font-medium text-zinc-600 group-hover:text-zinc-900">
               {profile.handle || name}
             </p>
-          </button>
+          </Link>
         );
       })}
     </section>

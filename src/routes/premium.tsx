@@ -5,6 +5,7 @@ import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
 import { CreatorToolsHero } from "@/components/creator-tools-hero";
 import { fetchFeed, fetchProfileStats } from "@/lib/nostr/social";
+import { BADGE_DAYS, badgePriceFromNotes } from "@/lib/nostr/badges";
 import { compactNumber } from "@/lib/format";
 import {
   Zap,
@@ -118,6 +119,8 @@ function CreatorDashboard() {
   const nostr = useNostr();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [zapsEarned, setZapsEarned] = useState<number | null>(null);
+  const [premiumPosts, setPremiumPosts] = useState(0);
+  const [badgePrice, setBadgePrice] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
   const pubkey = nostr.account?.pubkey;
@@ -128,6 +131,8 @@ function CreatorDashboard() {
     if (!pubkey) {
       setStats(null);
       setZapsEarned(null);
+      setPremiumPosts(0);
+      setBadgePrice(null);
       return;
     }
     let cancelled = false;
@@ -140,6 +145,8 @@ function CreatorDashboard() {
         if (cancelled) return;
         setStats(result);
         setZapsEarned(feed.reduce((sum, note) => sum + note.counts.zapSats, 0));
+        setPremiumPosts(feed.filter((note) => note.premium).length);
+        setBadgePrice(badgePriceFromNotes(feed));
       })
       .catch(() => undefined)
       .finally(() => {
@@ -202,6 +209,20 @@ function CreatorDashboard() {
           label="Zaps earned"
           value={zapsEarned == null ? "—" : `${compactNumber(zapsEarned)} sats`}
           hint="From your notes on the relays"
+        />
+        <DashboardRow
+          icon={Crown}
+          label="Creator badge"
+          value={
+            badgePrice == null
+              ? "Not set"
+              : `${compactNumber(badgePrice)} sats / ${BADGE_DAYS} days`
+          }
+          hint={
+            badgePrice == null
+              ? "Post something members-only to start your badge program"
+              : `${premiumPosts} members-only post${premiumPosts === 1 ? "" : "s"} · badge holders see them all`
+          }
         />
         <DashboardRow
           icon={Crown}

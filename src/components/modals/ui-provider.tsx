@@ -21,6 +21,15 @@ import {
   shortNpub,
 } from "@/lib/nostr/profiles";
 import { addRelay, getCustomRelays, removeRelay } from "@/lib/nostr/relays";
+import {
+  BADGE_DAYS,
+  DEFAULT_BADGE_SATS,
+  daysLeft,
+  grantCreatorBadge,
+  isBadgeActive,
+  useCreatorBadges,
+} from "@/lib/nostr/badges";
+import { lightningAddressFor } from "@/lib/nostr/lightning";
 import { hasPasskey, hasWebAuthn } from "@/lib/nostr/passkey";
 import { useBtcPrice, satsToUsd, formatUsd } from "@/lib/nostr/price";
 import { requestPaymentInvoice, isLightningInvoice } from "@/lib/nostr/zaps";
@@ -122,7 +131,7 @@ type ZapOptions = {
   profile?: Profile;
   note?: NostrEvent;
 };
-type UnlockOptions = { title?: string; sats?: number };
+type BadgeOptions = { creator?: string; name?: string; sats?: number };
 type ShareOptions = { url?: string; title?: string };
 type ComposeOptions = {
   mode?: "post" | "article" | "poll" | "reply";
@@ -159,7 +168,7 @@ type UICtx = {
 
   openZap: (o?: ZapOptions) => void;
   openCompose: (o?: ComposeOptions) => void;
-  openUnlock: (o?: UnlockOptions) => void;
+  openBadge: (o?: BadgeOptions) => void;
   openShare: (o?: ShareOptions) => void;
   openUpgrade: () => void;
   openSend: () => void;
@@ -193,7 +202,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
 
   const [zap, setZap] = useState<ZapOptions | null>(null);
   const [compose, setCompose] = useState<ComposeOptions | null>(null);
-  const [unlock, setUnlock] = useState<UnlockOptions | null>(null);
+  const [badge, setBadge] = useState<BadgeOptions | null>(null);
   const [share, setShare] = useState<ShareOptions | null>(null);
   const [upgrade, setUpgrade] = useState(false);
   const [send, setSend] = useState(false);
@@ -252,7 +261,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
 
       openZap: (o) => gate("send a zap", () => setZap(o ?? {})),
       openCompose: (o) => gate("post to Nostr", () => setCompose(o ?? { mode: "post" })),
-      openUnlock: (o) => gate("unlock premium content", () => setUnlock(o ?? {})),
+      openBadge: (o) => gate("get a creator badge", () => setBadge(o ?? {})),
       openShare: (o) => setShare(o ?? {}),
       openUpgrade: () => gate("become a Creator", () => setUpgrade(true)),
       openSend: () => gate("send sats", () => setSend(true)),
@@ -293,7 +302,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
         onClose={() => setCompose(null)}
         options={compose ?? { mode: "post" }}
       />
-      <UnlockModal open={!!unlock} onClose={() => setUnlock(null)} options={unlock ?? {}} />
+      <BadgeModal open={!!badge} onClose={() => setBadge(null)} options={badge ?? {}} />
       <ShareModal open={!!share} onClose={() => setShare(null)} options={share ?? {}} />
       <UpgradeModal open={upgrade} onClose={() => setUpgrade(false)} />
       <SendModal open={send} onClose={() => setSend(false)} />
@@ -753,7 +762,7 @@ function ComposeModal({
               title="Members only"
               hint={
                 premium
-                  ? `Only paying members can open this post (${price.toLocaleString()} sats).`
+                  ? `Your creator badge unlocks this and every members-only post (${price.toLocaleString()} sats / ${BADGE_DAYS} days).`
                   : "Free for everyone."
               }
               tone="amber"
@@ -761,20 +770,25 @@ function ComposeModal({
               onToggle={() => setPremium((v) => !v)}
             />
             {premium && (
-              <div className="grid grid-cols-3 gap-2 rounded-xl bg-amber-50/60 p-2 ring-1 ring-amber-100">
-                {[500, 2000, 5000].map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setPrice(p)}
-                    className={`rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors ${
-                      price === p
-                        ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200"
-                        : "text-amber-800/70"
-                    }`}
-                  >
-                    {p.toLocaleString()} sats
-                  </button>
-                ))}
+              <div className="rounded-xl bg-amber-50/60 p-2 ring-1 ring-amber-100">
+                <p className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+                  Badge price
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[500, 2000, 5000].map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setPrice(p)}
+                      className={`rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors ${
+                        price === p
+                          ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200"
+                          : "text-amber-800/70"
+                      }`}
+                    >
+                      {p.toLocaleString()} sats
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -836,59 +850,199 @@ function ComposeModal({
   );
 }
 
-// ---------- Unlock ----------
-function UnlockModal({
+// ---------- Creator badge ----------
+function BadgeModal({
   open,
   onClose,
   options,
 }: {
   open: boolean;
   onClose: () => void;
-  options: UnlockOptions;
+  options: BadgeOptions;
 }) {
+  const nostr = useNostr();
+  const price = useBtcPrice();
+  const badges = useCreatorBadges();
+  const [creatorProfile, setCreatorProfile] = useState<Profile | null>(null);
+  const [nwcUri, setNwcUri] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [paying, setPaying] = useState(false);
+
+  const creator = options.creator;
+  const sats = options.sats ?? DEFAULT_BADGE_SATS;
+  const name = options.name ?? "this creator";
+  const owned = creator
+    ? badges.find((badge) => badge.creator === creator && isBadgeActive(badge))
+    : undefined;
+  const usd = satsToUsd(sats, price);
+
+  useEffect(() => {
+    if (!open) return;
+    setNwcUri("");
+    setConnecting(false);
+    setPaying(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !creator) {
+      setCreatorProfile(null);
+      return;
+    }
+    let cancelled = false;
+    fetchProfile(creator)
+      .then((profile) => {
+        if (!cancelled) setCreatorProfile(profile);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, creator]);
+
+  const connect = async () => {
+    setConnecting(true);
+    try {
+      await nostr.connectWallet(nwcUri.trim());
+      setNwcUri("");
+      toast.success("Lightning wallet connected");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't connect that wallet.");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const buy = async () => {
+    if (!creator) {
+      toast.error("This creator hasn't set up a badge yet.");
+      return;
+    }
+    if (!nostr.wallet.connected) {
+      toast.error("Connect a Lightning wallet first.");
+      return;
+    }
+    setPaying(true);
+    try {
+      const profile = creatorProfile ?? (await fetchProfile(creator).catch(() => null));
+      const address = lightningAddressFor(creator, profile);
+      const invoice = await requestPaymentInvoice(address, sats);
+      await nostr.payInvoice(invoice);
+      const badge = grantCreatorBadge(creator, sats);
+      toast.success(`Creator badge active — ${daysLeft(badge)} days of members-only posts`);
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't buy that badge.");
+    } finally {
+      setPaying(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[440px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Crown className="size-5 text-amber-500" />
-            Unlock premium content
+            {owned ? "Creator badge active" : `${name}’s creator badge`}
           </DialogTitle>
-          <DialogDescription>{options.title ?? "This post is behind a paywall."}</DialogDescription>
+          <DialogDescription>
+            {owned
+              ? `Your badge unlocks every members-only post from ${name}.`
+              : `One badge unlocks every members-only post from ${name}.`}
+          </DialogDescription>
         </DialogHeader>
-        <div className="rounded-xl bg-gradient-to-br from-amber-50 to-orange-50 p-5 text-center ring-1 ring-amber-100">
-          <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">
-            One-time unlock
-          </p>
-          <p className="mt-1 text-[32px] font-bold tracking-tight text-zinc-900">
-            {options.sats ?? 500} sats
-          </p>
-          <p className="text-[11.5px] text-zinc-500">
-            ≈ ${((options.sats ?? 500) * 0.00064).toFixed(2)} USD · pays the creator directly
-          </p>
-        </div>
-        <ul className="space-y-1.5 text-[12.5px] text-zinc-600">
-          <li className="flex gap-2">
-            <Check className="size-4 text-emerald-500" /> Full article + media
-          </li>
-          <li className="flex gap-2">
-            <Check className="size-4 text-emerald-500" /> Saved to your library
-          </li>
-          <li className="flex gap-2">
-            <Check className="size-4 text-emerald-500" /> Or subscribe for $49/mo unlimited
-          </li>
-        </ul>
+
+        {owned ? (
+          <div className="rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 p-5 text-center ring-1 ring-emerald-100">
+            <p className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-emerald-700">
+              <Check className="size-3.5" /> Active · {daysLeft(owned)} days left
+            </p>
+            <p className="mt-1 text-[15px] font-semibold text-zinc-900">
+              You’re a member of {name}’s badge program
+            </p>
+            <p className="mt-1 text-[11.5px] text-zinc-500">
+              Paid {owned.sats.toLocaleString()} sats · no auto-renew
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="rounded-xl bg-gradient-to-br from-amber-50 to-orange-50 p-5 text-center ring-1 ring-amber-100">
+              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">
+                Creator badge · {BADGE_DAYS} days
+              </p>
+              <p className="mt-1 text-[32px] font-bold tracking-tight text-zinc-900">
+                {sats.toLocaleString()} sats
+              </p>
+              <p className="text-[11.5px] text-zinc-500">
+                {usd != null ? `≈ ${formatUsd(usd)} · ` : ""}paid directly to {name} over Lightning
+              </p>
+            </div>
+            <ul className="space-y-1.5 text-[12.5px] text-zinc-600">
+              <li className="flex gap-2">
+                <Check className="size-4 shrink-0 text-emerald-500" /> Every members-only post from{" "}
+                {name}
+              </li>
+              <li className="flex gap-2">
+                <Check className="size-4 shrink-0 text-emerald-500" /> Full text, images and
+                long-form articles
+              </li>
+              <li className="flex gap-2">
+                <Check className="size-4 shrink-0 text-emerald-500" /> No auto-renew — buy again
+                only if you want
+              </li>
+            </ul>
+
+            {nostr.wallet.connected ? (
+              <p className="rounded-lg bg-zinc-50 px-3 py-2 text-[11.5px] text-zinc-500 ring-1 ring-zinc-100">
+                Paying with {nostr.wallet.alias ?? "your connected wallet"}. Crays never holds the
+                sats.
+              </p>
+            ) : (
+              <div className="rounded-xl border border-zinc-200 p-3">
+                <p className="text-[12px] font-semibold text-zinc-900">
+                  Connect a Lightning wallet to pay
+                </p>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                  <input
+                    value={nwcUri}
+                    onChange={(e) => setNwcUri(e.target.value)}
+                    placeholder="nostr+walletconnect://…"
+                    className={`${inputCls} min-w-0 flex-1 font-mono text-[11px]`}
+                  />
+                  <PrimaryBtn
+                    className="!px-3 !py-2 !text-[12px]"
+                    disabled={!nwcUri.trim() || connecting}
+                    onClick={() => void connect()}
+                  >
+                    {connecting ? <Loader2 className="size-4 animate-spin" /> : "Connect"}
+                  </PrimaryBtn>
+                </div>
+                <p className="mt-1.5 text-[11px] text-zinc-500">
+                  Any NIP-47 wallet works. Payments go straight to the creator.
+                </p>
+              </div>
+            )}
+          </>
+        )}
+
         <DialogFooter>
-          <GhostBtn onClick={onClose}>Maybe later</GhostBtn>
-          <PrimaryBtn
-            className="!bg-amber-500 hover:!bg-amber-600"
-            onClick={() => {
-              toast.success("Unlocked — enjoy the read");
-              onClose();
-            }}
-          >
-            <Zap className="size-4" /> Pay {options.sats ?? 500} sats
-          </PrimaryBtn>
+          {owned ? (
+            <PrimaryBtn className="w-full" onClick={onClose}>
+              Start reading
+            </PrimaryBtn>
+          ) : (
+            <>
+              <GhostBtn onClick={onClose}>Maybe later</GhostBtn>
+              <PrimaryBtn
+                className="!bg-amber-500 hover:!bg-amber-600"
+                disabled={!nostr.wallet.connected || paying}
+                onClick={() => void buy()}
+              >
+                {paying ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}
+                {paying ? "Paying…" : `Pay ${sats.toLocaleString()} sats`}
+              </PrimaryBtn>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

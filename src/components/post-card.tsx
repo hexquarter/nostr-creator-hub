@@ -12,6 +12,7 @@ import {
   EyeOff,
   Link as LinkIcon,
   UserPlus,
+  Lock,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
@@ -23,6 +24,7 @@ import { useNostr } from "./nostr-provider";
 import { compactNumber, timeAgo } from "@/lib/format";
 import { contentWithoutImages, type FeedNote } from "@/lib/nostr/social";
 import { shortNpub } from "@/lib/nostr/profiles";
+import { isBadgeActive, useCreatorBadges, DEFAULT_BADGE_SATS } from "@/lib/nostr/badges";
 import { usePreferences } from "@/lib/preferences";
 import {
   DropdownMenu,
@@ -38,6 +40,7 @@ export type Post = {
   handle: string;
   verified?: boolean;
   premium?: boolean;
+  premiumSats?: number;
   time: string;
   content: string;
   avatar?: string;
@@ -65,6 +68,8 @@ export function postFromNote(note: FeedNote): Post {
     avatar: profile.picture,
     images,
     image: images[0] ? { url: images[0] } : undefined,
+    premium: note.premium,
+    premiumSats: note.premiumSats,
     sensitive: note.contentWarning
       ? { reason: note.contentWarning, note: note.contentWarning }
       : undefined,
@@ -97,6 +102,15 @@ export function PostCard({ post }: { post: Post }) {
     post.authorPubkey ? nostr.isFollowing(post.authorPubkey) : false,
   );
   const isReal = Boolean(post.event && post.authorPubkey);
+  const badges = useCreatorBadges();
+  const badge = post.authorPubkey
+    ? badges.find((item) => item.creator === post.authorPubkey && isBadgeActive(item))
+    : undefined;
+  const isAuthor = Boolean(post.authorPubkey && nostr.account?.pubkey === post.authorPubkey);
+  // Members-only posts are readable only by the author or by holders of that
+  // creator's badge — there is no per-post unlock.
+  const locked = Boolean(post.premium && !isAuthor && !badge);
+  const badgeSats = post.premiumSats ?? DEFAULT_BADGE_SATS;
 
   const shareUrl = post.event
     ? `https://njump.me/${nip19.neventEncode({ id: post.event.id, author: post.event.pubkey })}`
@@ -176,7 +190,8 @@ export function PostCard({ post }: { post: Post }) {
               {post.verified && <BadgeCheck className="size-3.5 shrink-0 fill-brand text-white" />}
               {post.premium && (
                 <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700">
-                  <Crown className="size-2.5" /> Premium
+                  {locked ? <Lock className="size-2.5" /> : <Crown className="size-2.5" />}
+                  {locked ? "Members" : "Premium"}
                 </span>
               )}
             </h4>
@@ -195,6 +210,19 @@ export function PostCard({ post }: { post: Post }) {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
+            {locked && (
+              <DropdownMenuItem
+                onClick={() =>
+                  ui.openBadge({
+                    creator: post.authorPubkey,
+                    name: post.author,
+                    sats: badgeSats,
+                  })
+                }
+              >
+                <Crown className="size-4 text-amber-600" /> Get creator badge
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={() => void toggleFollow()}>
               <UserPlus className="size-4" /> {following ? "Unfollow" : "Follow"} {post.handle}
             </DropdownMenuItem>
@@ -203,14 +231,16 @@ export function PostCard({ post }: { post: Post }) {
             >
               <LinkIcon className="size-4" /> Copy link
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => {
-                void navigator.clipboard.writeText(post.content);
-                toast.success("Post copied");
-              }}
-            >
-              <Copy className="size-4" /> Copy text
-            </DropdownMenuItem>
+            {!locked && (
+              <DropdownMenuItem
+                onClick={() => {
+                  void navigator.clipboard.writeText(post.content);
+                  toast.success("Post copied");
+                }}
+              >
+                <Copy className="size-4" /> Copy text
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => toast("Hidden from your feed")}>
               <EyeOff className="size-4" /> Not interested
@@ -225,9 +255,54 @@ export function PostCard({ post }: { post: Post }) {
         </DropdownMenu>
       </header>
 
-      <PostContent content={post.content} />
+      {locked ? (
+        <div className="relative overflow-hidden rounded-xl bg-amber-50/50 ring-1 ring-amber-100">
+          <p
+            aria-hidden
+            className="select-none whitespace-pre-wrap break-words p-4 text-[15px] leading-relaxed text-zinc-800 blur-[6px] [overflow-wrap:anywhere]"
+          >
+            {post.content.slice(0, 320)}
+          </p>
+          <div className="absolute inset-0 grid place-items-center bg-gradient-to-b from-white/30 via-white/80 to-white p-4">
+            <div className="max-w-sm text-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[9.5px] font-bold uppercase tracking-wider text-amber-800">
+                <Lock className="size-3" /> Members only
+              </span>
+              <p className="mt-2 text-[13.5px] font-semibold text-zinc-900">
+                {post.author}’s creator badge unlocks this post
+              </p>
+              <p className="mt-1 text-[11.5px] leading-relaxed text-zinc-500">
+                One badge opens every members-only post from {post.author}.
+              </p>
+              <button
+                onClick={() =>
+                  ui.openBadge({
+                    creator: post.authorPubkey,
+                    name: post.author,
+                    sats: badgeSats,
+                  })
+                }
+                className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2 text-[12px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
+              >
+                <Crown className="size-3.5" /> Get badge · {compactNumber(badgeSats)} sats/mo
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <PostContent content={post.content} />
+      )}
 
-      {images.length > 0 && (
+      {locked && images.length > 0 && (
+        <div className="relative grid aspect-[16/10] w-full place-items-center overflow-hidden rounded-xl bg-gradient-to-br from-amber-100 via-amber-50 to-orange-100 ring-1 ring-amber-100">
+          <div className="text-center">
+            <Lock className="mx-auto size-6 text-amber-700/70" />
+            <p className="mt-1 text-[11.5px] font-semibold text-amber-800">Members-only media</p>
+          </div>
+        </div>
+      )}
+
+      {!locked && images.length > 0 && (
         <div className="relative aspect-[16/10] w-full overflow-hidden rounded-xl bg-zinc-100 ring-1 ring-black/5">
           {post.sensitive && !revealed ? (
             <>
