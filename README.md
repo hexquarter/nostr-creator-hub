@@ -38,11 +38,15 @@ and Spark open a hosted buy flow and the buyer pays the invoice afterwards.
 | `VITE_CRAYS_SPARK_URL`         | Optional Spark checkout URL. Defaults to `spark.money`.                                                                    |
 | `VITE_CRAYS_CASHAPP_URL`       | Optional Cash App override. Otherwise the modal deep-links `cash.app/launch/lightning/<invoice>` once an invoice exists.   |
 
-Set these at build time (for GitHub Pages, add them to the workflow `env:` block
-or as repository variables). To create the receiving address, claim a username
-for the Crays npub at [npub.cash](https://npub.cash) (or use any LNURL-pay
-address) and put it in `VITE_CRAYS_LIGHTNING_ADDRESS`. Until then the modal
-shows a "checkout is almost ready" notice instead of a QR.
+Set these at build time. For GitHub Pages, add repository variables
+`CRAYS_LIGHTNING_ADDRESS`, `CRAYS_CASHAPP_URL`, `CRAYS_MOONPAY_URL` and
+`CRAYS_SPARK_URL` under **Settings → Secrets and variables → Actions →
+Variables**; `.github/workflows/deploy.yml` maps them to the `VITE_*` names
+above. Leaving them unset keeps the placeholder checkout. To create the
+receiving address, claim a username for the Crays npub at
+[npub.cash](https://npub.cash) (or use any LNURL-pay address) and set
+`CRAYS_LIGHTNING_ADDRESS`. Until then the modal shows a "checkout is almost
+ready" notice instead of a QR.
 
 The `verify` endpoint is optional per LUD-21. If a wallet doesn't expose one,
 the creator checkout asks the buyer to connect a wallet and pay in one tap,
