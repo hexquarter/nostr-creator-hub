@@ -15,8 +15,13 @@ import {
   LogIn,
   LogOut,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useUI } from "@/components/modals/ui-provider";
+import { useNostr } from "@/components/nostr-provider";
 import { AvatarTile } from "@/components/avatar-tile";
+import { formatSats } from "@/lib/nostr/price";
+import { compactNumber } from "@/lib/format";
+import { fetchProfileStats } from "@/lib/nostr/social";
 
 const nav = [
   { to: "/", icon: Home, label: "Home" },
@@ -25,23 +30,49 @@ const nav = [
   { to: "/messages", icon: MessageCircle, label: "Messages" },
   { to: "/notifications", icon: Bell, label: "Notifications" },
   { to: "/bookmarks", icon: Bookmark, label: "Bookmarks" },
-  { to: "/premium", icon: Crown, label: "Premium" },
+  { to: "/premium", icon: Crown, label: "Creator tools" },
   { to: "/wallet", icon: Wallet, label: "Wallet" },
   { to: "/profile", icon: User, label: "Profile" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ] as const;
 
-import logo from '../assets/crays-logo.svg'
+import logo from "../assets/crays-logo.svg";
 
 export function LeftSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const ui = useUI();
+  const nostr = useNostr();
+  const [stats, setStats] = useState<{
+    posts: number;
+    following: number;
+    followers: number;
+  } | null>(null);
+
+  const pubkey = nostr.account?.pubkey;
+
+  useEffect(() => {
+    if (!pubkey) {
+      setStats(null);
+      return;
+    }
+    let cancelled = false;
+    fetchProfileStats(pubkey)
+      .then((result) => {
+        if (!cancelled) setStats(result);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [pubkey]);
+
+  const balance = nostr.wallet.balanceSats;
 
   return (
     <aside className="sticky top-0 hidden h-screen flex-col py-6 lg:flex">
       {/* Logo */}
       <Link to="/" className="mb-8 flex items-center gap-2.5 px-3">
-        <img src={logo} className="h-7"/>
+        <img src={logo} className="h-7" alt="Crays" />
       </Link>
 
       {/* Nav */}
@@ -72,7 +103,10 @@ export function LeftSidebar() {
           onClick={ui.openImportInstagram}
           className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100/80 hover:text-zinc-900"
         >
-          <Camera className="size-[18px] shrink-0 text-zinc-400 group-hover:text-zinc-700" strokeWidth={2} />
+          <Camera
+            className="size-[18px] shrink-0 text-zinc-400 group-hover:text-zinc-700"
+            strokeWidth={2}
+          />
           Import from Instagram
         </button>
       </nav>
@@ -80,20 +114,30 @@ export function LeftSidebar() {
       {/* Auth CTA / Account chip */}
       <div className="mt-6 space-y-3">
         {ui.user ? (
-          <div className="flex items-center gap-3 rounded-xl bg-white p-3 shadow-card ring-1 ring-black/5">
-            <AvatarTile seed={ui.user.name} size={36} />
+          <Link
+            to="/profile"
+            className="flex items-center gap-3 rounded-xl bg-white p-3 shadow-card ring-1 ring-black/5 hover:bg-zinc-50"
+          >
+            {ui.user.picture ? (
+              <img src={ui.user.picture} alt="" className="size-9 rounded-full object-cover" />
+            ) : (
+              <AvatarTile seed={ui.user.name} size={36} />
+            )}
             <div className="min-w-0 flex-1">
               <p className="truncate text-[12.5px] font-semibold text-zinc-900">{ui.user.name}</p>
               <p className="truncate text-[10.5px] text-zinc-500">{ui.user.handle}</p>
             </div>
             <button
               aria-label="Sign out"
-              onClick={ui.openLogoutConfirm}
+              onClick={(e) => {
+                e.preventDefault();
+                ui.openLogoutConfirm();
+              }}
               className="grid size-8 place-items-center rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-rose-600"
             >
               <LogOut className="size-4" />
             </button>
-          </div>
+          </Link>
         ) : (
           <button
             onClick={() => ui.openAuth()}
@@ -103,38 +147,27 @@ export function LeftSidebar() {
           </button>
         )}
 
-        {/* Dashboard + wallet */}
+        {/* Creator stats */}
         <div className="rounded-xl bg-surface p-4 shadow-card ring-1 ring-black/5">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-              Creator Dashboard
+              Your activity
             </h3>
-            <span className="text-[10px] font-medium text-emerald-600">+12%</span>
+            <Link to="/profile" className="text-[10px] font-medium text-brand hover:underline">
+              View
+            </Link>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Stat label="MRR" value="1.2M" suffix="sats" />
-            <Stat label="Subs" value="842" />
-            <Stat label="Premium" value="184" />
-            <Stat label="Earned" value="$2.4k" />
+          <div className="grid grid-cols-3 gap-3">
+            <Stat label="Notes" value={stats ? compactNumber(stats.posts) : "—"} />
+            <Stat label="Followers" value={stats ? compactNumber(stats.followers) : "—"} />
+            <Stat label="Following" value={stats ? compactNumber(stats.following) : "—"} />
           </div>
-          <svg viewBox="0 0 100 20" className="mt-4 h-6 w-full text-brand">
-            <path
-              d="M0 14 L12 12 L24 15 L36 8 L48 10 L60 6 L72 9 L84 4 L100 5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M0 14 L12 12 L24 15 L36 8 L48 10 L60 6 L72 9 L84 4 L100 5 L100 20 L0 20 Z"
-              fill="currentColor"
-              opacity="0.08"
-            />
-          </svg>
         </div>
 
-        <div className="flex items-center gap-3 rounded-xl bg-zinc-900 p-3 text-white">
+        <Link
+          to="/wallet"
+          className="flex items-center gap-3 rounded-xl bg-zinc-900 p-3 text-white hover:bg-black"
+        >
           <div className="grid size-9 place-items-center rounded-lg bg-brand/15 text-brand">
             <Zap className="size-4" strokeWidth={2.5} />
           </div>
@@ -142,22 +175,25 @@ export function LeftSidebar() {
             <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">
               Balance
             </p>
-            <p className="truncate text-sm font-semibold">42,069 sats</p>
+            <p className="truncate text-sm font-semibold">
+              {nostr.wallet.connected
+                ? balance == null
+                  ? "Loading…"
+                  : `${formatSats(balance)} sats`
+                : "Connect wallet"}
+            </p>
           </div>
-        </div>
+        </Link>
       </div>
     </aside>
   );
 }
 
-function Stat({ label, value, suffix }: { label: string; value: string; suffix?: string }) {
+function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</p>
-      <p className="text-[13px] font-semibold text-zinc-900">
-        {value}
-        {suffix && <span className="ml-0.5 text-[10px] font-medium text-zinc-400">{suffix}</span>}
-      </p>
+      <p className="text-[13px] font-semibold text-zinc-900">{value}</p>
     </div>
   );
 }

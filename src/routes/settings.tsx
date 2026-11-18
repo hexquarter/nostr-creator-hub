@@ -13,17 +13,23 @@ import {
   ChevronRight,
   Copy,
   Eye,
-  EyeOff,
+  Loader2,
+  Camera,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useUI } from "@/components/modals/ui-provider";
+import { useNostr } from "@/components/nostr-provider";
+import { getCustomRelays, getRelayList, removeRelay } from "@/lib/nostr/relays";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
       { title: "Settings — Crays" },
-      { name: "description", content: "Manage your account, keys, relays, wallet and privacy on Crays." },
+      {
+        name: "description",
+        content: "Manage your account, keys, relays, wallet and privacy on Crays.",
+      },
     ],
   }),
   component: Settings,
@@ -40,19 +46,71 @@ const sections = [
   { id: "language", icon: Globe, label: "Language & region", desc: "Currency and locale" },
 ];
 
-const relays = [
-  { url: "wss://relay.damus.io", status: "Connected", reads: true, writes: true },
-  { url: "wss://nos.lol", status: "Connected", reads: true, writes: true },
-  { url: "wss://relay.snort.social", status: "Connected", reads: true, writes: false },
-  { url: "wss://relay.nostr.band", status: "Slow", reads: true, writes: true },
-];
-
 function Settings() {
-  const [showKey, setShowKey] = useState(false);
   const ui = useUI();
+  const nostr = useNostr();
+  const profile = nostr.account?.profile;
+  const [relays, setRelays] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    displayName: "",
+    about: "",
+    lud16: "",
+    website: "",
+  });
+
+  useEffect(() => {
+    setForm({
+      name: profile?.name ?? "",
+      displayName: profile?.displayName ?? "",
+      about: profile?.about ?? "",
+      lud16: profile?.lud16 ?? profile?.lud06 ?? "",
+      website: profile?.website ?? "",
+    });
+  }, [
+    profile?.name,
+    profile?.displayName,
+    profile?.about,
+    profile?.lud16,
+    profile?.lud06,
+    profile?.website,
+  ]);
+
+  useEffect(() => {
+    setRelays(getRelayList());
+  }, []);
+
+  const save = async () => {
+    if (!nostr.account) {
+      ui.openAuth({ intent: "edit your profile" });
+      return;
+    }
+    setSaving(true);
+    try {
+      await nostr.updateProfile({
+        name: form.name.trim(),
+        displayName: form.displayName.trim() || form.name.trim(),
+        about: form.about.trim(),
+        lud16: form.lud16.trim(),
+        website: form.website.trim(),
+      });
+      toast.success("Profile saved to your relays");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't save your profile.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const npub = nostr.account?.npub ?? "Sign in to see your public key";
+  const canReveal = Boolean(nostr.account?.canExportKey);
 
   return (
-    <PageShell title="Settings" subtitle="Tune Crays to your taste — keys, relays, notifications and more.">
+    <PageShell
+      title="Settings"
+      subtitle="Tune Crays to your taste — keys, relays, notifications and more."
+    >
       <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
         {/* Side nav */}
         <aside className="space-y-1 rounded-2xl bg-white p-2 shadow-card ring-1 ring-black/5 lg:self-start">
@@ -69,7 +127,9 @@ function Settings() {
               />
               <span className="flex-1">
                 <span className="block text-[13px] font-semibold">{s.label}</span>
-                <span className={`block text-[11px] ${i === 0 ? "text-brand/70" : "text-zinc-400"}`}>
+                <span
+                  className={`block text-[11px] ${i === 0 ? "text-brand/70" : "text-zinc-400"}`}
+                >
                   {s.desc}
                 </span>
               </span>
@@ -83,28 +143,66 @@ function Settings() {
           <Panel title="Account" desc="How others see you across the protocol.">
             <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
               <div className="rounded-2xl bg-white p-1.5 shadow-card ring-1 ring-black/5">
-                <AvatarTile seed="Alex Stellar" size={72} rounded="xl" />
+                {profile?.picture ? (
+                  <img
+                    src={profile.picture}
+                    alt=""
+                    className="size-[72px] rounded-xl object-cover"
+                  />
+                ) : (
+                  <AvatarTile
+                    seed={profile?.displayName || profile?.name || "You"}
+                    size={72}
+                    rounded="xl"
+                  />
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
-                <button className="rounded-lg bg-zinc-900 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-black">
-                  Upload avatar
+                <button
+                  onClick={() => ui.openEditProfile()}
+                  className="rounded-lg bg-zinc-900 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-black"
+                >
+                  <Camera className="mr-1 inline size-3.5" /> Edit picture
                 </button>
-                <button className="rounded-lg bg-zinc-100 px-3.5 py-2 text-[12px] font-semibold text-zinc-700 hover:bg-zinc-200">
-                  Remove
+                <button
+                  onClick={() => void save()}
+                  disabled={saving || !nostr.account}
+                  className="rounded-lg bg-zinc-100 px-3.5 py-2 text-[12px] font-semibold text-zinc-700 hover:bg-zinc-200 disabled:opacity-50"
+                >
+                  {saving ? <Loader2 className="size-3.5 animate-spin" /> : "Save changes"}
                 </button>
               </div>
             </div>
 
             <div className="mt-6 grid gap-5 sm:grid-cols-2">
-              <Field label="Display name" defaultValue="Alex Stellar" />
-              <Field label="Handle" defaultValue="alex" prefix="@" />
-              <Field label="Lightning address" defaultValue="alex@crays.net" />
-              <Field label="Website" defaultValue="https://stellar.app" />
+              <Field
+                label="Display name"
+                value={form.displayName}
+                onChange={(v) => setForm((f) => ({ ...f, displayName: v }))}
+              />
+              <Field
+                label="Handle"
+                value={form.name}
+                onChange={(v) => setForm((f) => ({ ...f, name: v }))}
+                prefix="@"
+              />
+              <Field
+                label="Lightning address"
+                value={form.lud16}
+                onChange={(v) => setForm((f) => ({ ...f, lud16: v }))}
+              />
+              <Field
+                label="Website"
+                value={form.website}
+                onChange={(v) => setForm((f) => ({ ...f, website: v }))}
+              />
               <div className="sm:col-span-2">
                 <Label>Bio</Label>
                 <textarea
                   rows={3}
-                  defaultValue="Building the open creator economy. Long-form on macro, Bitcoin and design. Powered by zaps, not ads."
+                  value={form.about}
+                  onChange={(e) => setForm((f) => ({ ...f, about: e.target.value }))}
+                  placeholder="Tell people what you create…"
                   className="w-full resize-none rounded-xl bg-white px-3 py-2.5 text-[13.5px] text-zinc-900 ring-1 ring-black/5 outline-none focus:ring-2 focus:ring-brand/40"
                 />
               </div>
@@ -112,35 +210,41 @@ function Settings() {
           </Panel>
 
           {/* Keys */}
-          <Panel title="Keys & identity" desc="Your npub is public. Your nsec is everything — never share it.">
+          <Panel
+            title="Keys & identity"
+            desc="Your npub is public. Your nsec is everything — never share it."
+          >
             <div className="space-y-3">
-              <KeyRow
-                label="Public key (npub)"
-                value="npub1q9rk5l9smc3w4hk7xkfny0pl…u7e2x"
-              />
+              <KeyRow label="Public key (npub)" value={npub} />
               <KeyRow
                 label="Private key (nsec)"
-                value={showKey ? "nsec1xkqf3w5l8m7…d2e9x4kpd0n8a7" : "nsec1•••••••••••••••••••••••••••••"}
+                value={canReveal ? "nsec1•••••••••••••••••••••••••••••" : "Managed by your signer"}
                 trailing={
-                  <button
-                    onClick={() => { setShowKey(false); ui.openRevealKey(); }}
-                    className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-200"
-                  >
-                    {showKey ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-                    Reveal
-                  </button>
+                  canReveal ? (
+                    <button
+                      onClick={ui.openRevealKey}
+                      className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-200"
+                    >
+                      <Eye className="size-3" /> Reveal
+                    </button>
+                  ) : undefined
                 }
               />
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
               <button
-                onClick={() => toast.success("Backup downloaded")}
-                className="rounded-lg bg-zinc-900 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-black"
+                onClick={ui.openRevealKey}
+                disabled={!canReveal}
+                className="rounded-lg bg-zinc-900 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-black disabled:opacity-50"
               >
                 Backup keys
               </button>
               <button
-                onClick={() => toast("Connecting signer…")}
+                onClick={() =>
+                  nostr.account
+                    ? void nostr.signInWithNip07().catch((e) => toast.error(e.message))
+                    : ui.openAuth()
+                }
                 className="rounded-lg bg-zinc-100 px-3.5 py-2 text-[12px] font-semibold text-zinc-700 hover:bg-zinc-200"
               >
                 Connect signer (NIP-07)
@@ -151,29 +255,34 @@ function Settings() {
           {/* Relays */}
           <Panel title="Relays" desc="The servers that store and broadcast your posts.">
             <ul className="divide-y divide-zinc-100">
-              {relays.map((r) => (
-                <li key={r.url} className="flex items-center gap-4 py-3">
-                  <span
-                    className={`size-2 shrink-0 rounded-full ${
-                      r.status === "Slow" ? "bg-amber-500" : "bg-emerald-500"
-                    }`}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-mono text-[12.5px] font-medium text-zinc-900">
-                      {r.url}
-                    </p>
-                    <p className="text-[11px] text-zinc-500">{r.status}</p>
-                  </div>
-                  <Toggle label="Read" on={r.reads} />
-                  <Toggle label="Write" on={r.writes} />
-                  <button
-                    onClick={() => toast.success(`Removed ${r.url}`)}
-                    className="text-[11px] font-semibold text-zinc-400 hover:text-rose-500"
-                  >
-                    Remove
-                  </button>
-                </li>
-              ))}
+              {relays.map((url) => {
+                const custom = getCustomRelays().includes(url);
+                return (
+                  <li key={url} className="flex items-center gap-4 py-3">
+                    <span className="size-2 shrink-0 rounded-full bg-emerald-500" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-mono text-[12.5px] font-medium text-zinc-900">
+                        {url}
+                      </p>
+                      <p className="text-[11px] text-zinc-500">
+                        {custom ? "Custom relay" : "Default relay"} · read & write
+                      </p>
+                    </div>
+                    {custom && (
+                      <button
+                        onClick={() => {
+                          removeRelay(url);
+                          setRelays(getRelayList());
+                          toast.success(`Removed ${url}`);
+                        }}
+                        className="text-[11px] font-semibold text-zinc-400 hover:text-rose-500"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
             <button
               onClick={ui.openAddRelay}
@@ -190,7 +299,6 @@ function Settings() {
               <PrefRow title="Replies & mentions" desc="People talking to you" on />
               <PrefRow title="New followers" desc="When someone follows you" on />
               <PrefRow title="Premium subscribers" desc="New paid subscribers" on />
-              {/* <PrefRow title="Weekly digest" desc="A Sunday summary by email" /> */}
             </ul>
           </Panel>
 
@@ -198,11 +306,16 @@ function Settings() {
           <Panel title="Logout">
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-rose-50/60 p-4 ring-1 ring-rose-200/60">
               <div>
-                <p className="text-[13px] font-semibold text-rose-700">You can sign-out to change account and return anytime using your Nostr identity keys.</p>
+                <p className="text-[13px] font-semibold text-rose-700">
+                  {nostr.account
+                    ? "Sign out to switch accounts. You can return anytime with your Nostr key or passkey."
+                    : "You are signed out."}
+                </p>
               </div>
               <button
                 onClick={ui.openLogoutConfirm}
-                className="rounded-lg bg-rose-600 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-rose-700"
+                disabled={!nostr.account}
+                className="rounded-lg bg-rose-600 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
               >
                 Disconnect
               </button>
@@ -228,7 +341,9 @@ function Panel({
   return (
     <section className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 sm:p-6">
       <header className="mb-5">
-        <h3 className={`text-[15px] font-semibold ${tone === "danger" ? "text-rose-700" : "text-zinc-900"}`}>
+        <h3
+          className={`text-[15px] font-semibold ${tone === "danger" ? "text-rose-700" : "text-zinc-900"}`}
+        >
           {title}
         </h3>
         {desc && <p className="mt-0.5 text-[12.5px] text-zinc-500">{desc}</p>}
@@ -248,11 +363,13 @@ function Label({ children }: { children: React.ReactNode }) {
 
 function Field({
   label,
-  defaultValue,
+  value,
+  onChange,
   prefix,
 }: {
   label: string;
-  defaultValue: string;
+  value: string;
+  onChange: (value: string) => void;
   prefix?: string;
 }) {
   return (
@@ -261,7 +378,8 @@ function Field({
       <div className="flex items-center rounded-xl bg-white ring-1 ring-black/5 focus-within:ring-2 focus-within:ring-brand/40">
         {prefix && <span className="pl-3 text-[13.5px] text-zinc-400">{prefix}</span>}
         <input
-          defaultValue={defaultValue}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
           className="w-full bg-transparent px-3 py-2.5 text-[13.5px] text-zinc-900 outline-none"
         />
       </div>
@@ -282,32 +400,21 @@ function KeyRow({
     <div>
       <Label>{label}</Label>
       <div className="flex items-center gap-2 rounded-xl bg-zinc-50 px-3 py-2.5 ring-1 ring-black/5">
-        <code className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-zinc-700">{value}</code>
+        <code className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-zinc-700">
+          {value}
+        </code>
         {trailing}
-        <button className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-200">
+        <button
+          onClick={() => {
+            void navigator.clipboard.writeText(value);
+            toast.success("Copied");
+          }}
+          className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-200"
+        >
           <Copy className="size-3" /> Copy
         </button>
       </div>
     </div>
-  );
-}
-
-function Toggle({ label, on }: { label: string; on: boolean }) {
-  return (
-    <label className="hidden items-center gap-1.5 text-[11px] font-medium text-zinc-500 sm:flex">
-      <span>{label}</span>
-      <span
-        className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-          on ? "bg-brand" : "bg-zinc-300"
-        }`}
-      >
-        <span
-          className={`inline-block size-3 transform rounded-full bg-white shadow transition-transform ${
-            on ? "translate-x-3.5" : "translate-x-0.5"
-          }`}
-        />
-      </span>
-    </label>
   );
 }
 

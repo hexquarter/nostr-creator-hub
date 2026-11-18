@@ -33,6 +33,7 @@ export function MobileTopBar({ title }: { title?: string }) {
             </Link>
             <Link
               to="/messages"
+              search={{}}
               aria-label="Messages"
               className="grid size-9 place-items-center rounded-full text-zinc-700 transition-colors hover:bg-zinc-100"
             >

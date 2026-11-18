@@ -1,5 +1,30 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { toast } from "sonner";
+import { QRCodeSVG } from "qrcode.react";
+import type { NostrEvent } from "nostr-tools";
+import { useNostr } from "@/components/nostr-provider";
+import type { Profile } from "@/lib/nostr/profiles";
+import { fetchProfile, normalizePubkey, pubkeyToNpub } from "@/lib/nostr/profiles";
+import { addRelay, getCustomRelays, removeRelay } from "@/lib/nostr/relays";
+import { useBtcPrice, satsToUsd, formatUsd } from "@/lib/nostr/price";
+import { requestPaymentInvoice, isLightningInvoice } from "@/lib/nostr/zaps";
+import {
+  fetchInstagramPost,
+  fetchRemoteImage,
+  parseInstagramUrl,
+  type ImportedPost,
+} from "@/lib/instagram";
+import { readInstagramExportFile, type InstagramExport } from "@/lib/instagram-export";
+import { base64ToBytes } from "@/lib/crypto";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +43,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import {
   CommandDialog,
   CommandEmpty,
@@ -67,21 +98,46 @@ import {
   ArrowRight,
   AlertTriangle,
   Lock,
-
   Loader2,
+  Pencil,
+  LogIn,
 } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
-
 // ---------- Types ----------
-type ZapOptions = { recipient?: string; postTitle?: string };
+type ZapOptions = {
+  recipient?: string;
+  postTitle?: string;
+  pubkey?: string;
+  profile?: Profile;
+  note?: NostrEvent;
+};
 type UnlockOptions = { title?: string; sats?: number };
 type ShareOptions = { url?: string; title?: string };
-type ComposeOptions = { mode?: "post" | "article" | "poll" | "reply"; replyTo?: string };
-type TxDetail = { id: string; who: string; note: string; amount: string; usd: string; time: string; kind: "in" | "out" };
+type ComposeOptions = {
+  mode?: "post" | "article" | "poll" | "reply";
+  replyTo?: string;
+  replyToEvent?: NostrEvent;
+};
+type TxDetail = {
+  id: string;
+  who: string;
+  note: string;
+  amount: string;
+  usd: string;
+  time: string;
+  kind: "in" | "out";
+};
 
-export type AuthMethod = "passkey" | "bunker" | "nostr-connect" | "nwc" | "keys";
-export type AuthUser = { name: string; handle: string; npub: string; method: AuthMethod };
+export type AuthMethod = "passkey" | "bunker" | "nostr-connect" | "nip07" | "nsec";
+export type AuthUser = {
+  name: string;
+  handle: string;
+  npub: string;
+  method: AuthMethod;
+  pubkey?: string;
+  picture?: string;
+};
 type AuthOptions = { intent?: string };
 
 type UICtx = {
@@ -111,7 +167,6 @@ type UICtx = {
   openPollBuilder: () => void;
 };
 
-
 const UIContext = createContext<UICtx | null>(null);
 
 export function useUI() {
@@ -121,10 +176,8 @@ export function useUI() {
 }
 
 // ---------- Provider ----------
-const AUTH_STORAGE_KEY = "crays.auth.user";
-
 export function UIProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const { account, signOut: nostrSignOut } = useNostr();
   const [auth, setAuth] = useState<AuthOptions | null>(null);
   const [importIG, setImportIG] = useState(false);
 
@@ -147,27 +200,30 @@ export function UIProvider({ children }: { children: ReactNode }) {
   const [imagePicker, setImagePicker] = useState(false);
   const [pollBuilder, setPollBuilder] = useState(false);
 
-  // hydrate persisted mock session
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (raw) setUser(JSON.parse(raw));
-    } catch {}
-  }, []);
+  const user = useMemo<AuthUser | null>(() => {
+    if (!account) return null;
+    const profile = account.profile;
+    return {
+      name: profile.displayName || profile.name,
+      handle: profile.handle,
+      npub: account.npub,
+      method: account.method,
+      pubkey: account.pubkey,
+      picture: profile.picture,
+    };
+  }, [account]);
 
-  const signIn = useCallback((u: AuthUser) => {
-    setUser(u);
-    try { localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(u)); } catch {}
-  }, []);
   const signOut = useCallback(() => {
-    setUser(null);
-    try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch {}
+    nostrSignOut();
     toast.success("Signed out");
-  }, []);
+  }, [nostrSignOut]);
 
   const value = useMemo<UICtx>(() => {
     const gate = (intent: string, run: () => void) => {
-      if (user) { run(); return true; }
+      if (user) {
+        run();
+        return true;
+      }
       setAuth({ intent });
       return false;
     };
@@ -177,7 +233,10 @@ export function UIProvider({ children }: { children: ReactNode }) {
       requireAuth: (intent, cb) => gate(intent, () => cb?.()),
       openAuth: (o) => setAuth(o ?? {}),
       openImportInstagram: () => {
-        if (!user) { setAuth({ intent: "import your Instagram content" }); return; }
+        if (!user) {
+          setAuth({ intent: "import your Instagram content" });
+          return;
+        }
         setImportIG(true);
       },
 
@@ -214,13 +273,16 @@ export function UIProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-
   return (
     <UIContext.Provider value={value}>
       {children}
 
       <ZapModal open={!!zap} onClose={() => setZap(null)} options={zap ?? {}} />
-      <ComposeModal open={!!compose} onClose={() => setCompose(null)} options={compose ?? { mode: "post" }} />
+      <ComposeModal
+        open={!!compose}
+        onClose={() => setCompose(null)}
+        options={compose ?? { mode: "post" }}
+      />
       <UnlockModal open={!!unlock} onClose={() => setUnlock(null)} options={unlock ?? {}} />
       <ShareModal open={!!share} onClose={() => setShare(null)} options={share ?? {}} />
       <UpgradeModal open={upgrade} onClose={() => setUpgrade(false)} />
@@ -245,10 +307,9 @@ export function UIProvider({ children }: { children: ReactNode }) {
         open={!!auth}
         options={auth ?? {}}
         onClose={() => setAuth(null)}
-        onSignIn={(u) => { signIn(u); setAuth(null); setImportIG(true); }}
+        onSignedIn={() => setAuth(null)}
       />
       <ImportInstagramModal open={importIG} onClose={() => setImportIG(false)} />
-
     </UIContext.Provider>
   );
 }
@@ -277,7 +338,9 @@ function GhostBtn({ children, ...p }: React.ButtonHTMLAttributes<HTMLButtonEleme
 function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     <label className="block space-y-1.5">
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">{label}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+        {label}
+      </span>
       {children}
       {hint && <span className="block text-[11px] text-zinc-400">{hint}</span>}
     </label>
@@ -287,10 +350,79 @@ const inputCls =
   "w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-[13.5px] text-zinc-900 placeholder:text-zinc-400 outline-none focus:border-brand focus:ring-2 focus:ring-brand/20";
 
 // ---------- Zap ----------
-function ZapModal({ open, onClose, options }: { open: boolean; onClose: () => void; options: ZapOptions }) {
+function ZapModal({
+  open,
+  onClose,
+  options,
+}: {
+  open: boolean;
+  onClose: () => void;
+  options: ZapOptions;
+}) {
+  const nostr = useNostr();
+  const price = useBtcPrice();
   const presets = [21, 100, 500, 1000, 5000, 21000];
   const [amount, setAmount] = useState(500);
   const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [profile, setProfile] = useState<Profile | null>(options.profile ?? null);
+  const [nwcUri, setNwcUri] = useState("");
+  const [connecting, setConnecting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setAmount(500);
+    setNote("");
+    setBusy(false);
+    setNwcUri("");
+    setProfile(options.profile ?? null);
+    if (!options.profile && options.pubkey) {
+      fetchProfile(options.pubkey)
+        .then((next) => setProfile(next))
+        .catch(() => undefined);
+    }
+  }, [open, options.profile, options.pubkey]);
+
+  const usd = formatUsd(satsToUsd(amount, price));
+
+  const connect = async () => {
+    setConnecting(true);
+    try {
+      await nostr.connectWallet(nwcUri);
+      toast.success("Lightning wallet connected");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't connect that wallet.");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const send = async () => {
+    if (!profile) {
+      toast.error("Open the creator's profile to zap them.");
+      return;
+    }
+    if (!nostr.wallet.connected) {
+      toast.error("Connect a Lightning wallet first.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await nostr.zap({
+        profile,
+        amountSats: amount,
+        comment: note.trim() || undefined,
+        note: options.note ?? null,
+      });
+      toast.success(`Zapped ${amount.toLocaleString()} sats ⚡`);
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The zap didn't go through.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[440px]">
@@ -302,22 +434,29 @@ function ZapModal({ open, onClose, options }: { open: boolean; onClose: () => vo
             Send a zap
           </DialogTitle>
           <DialogDescription>
-            {options.recipient ? `To ${options.recipient}` : "Reward great content with sats."}
+            {profile
+              ? `To ${profile.displayName}${profile.lud16 ? ` · ${profile.lud16}` : ""}`
+              : options.recipient
+                ? `To ${options.recipient}`
+                : "Reward great content with sats."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="rounded-xl bg-gradient-to-br from-amber-50 to-orange-50 p-5 text-center ring-1 ring-amber-100">
-            <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">Amount</p>
+            <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">
+              Amount
+            </p>
             <div className="mt-1 flex items-baseline justify-center gap-1.5">
               <input
                 type="number"
+                min={1}
                 value={amount}
-                onChange={(e) => setAmount(Number(e.target.value) || 0)}
+                onChange={(e) => setAmount(Math.max(1, Number(e.target.value) || 0))}
                 className="w-32 bg-transparent text-center text-[36px] font-bold tracking-tight text-zinc-900 outline-none"
               />
               <span className="text-[13px] font-medium text-zinc-500">sats</span>
             </div>
-            <p className="text-[11.5px] text-zinc-500">≈ ${(amount * 0.00064).toFixed(2)} USD</p>
+            <p className="text-[11.5px] text-zinc-500">≈ {usd} USD</p>
           </div>
           <div className="grid grid-cols-3 gap-2">
             {presets.map((p) => (
@@ -325,7 +464,9 @@ function ZapModal({ open, onClose, options }: { open: boolean; onClose: () => vo
                 key={p}
                 onClick={() => setAmount(p)}
                 className={`rounded-lg py-2 text-[12px] font-semibold ring-1 transition-colors ${
-                  amount === p ? "bg-zinc-900 text-white ring-zinc-900" : "bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50"
+                  amount === p
+                    ? "bg-zinc-900 text-white ring-zinc-900"
+                    : "bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50"
                 }`}
               >
                 {p.toLocaleString()}
@@ -340,17 +481,45 @@ function ZapModal({ open, onClose, options }: { open: boolean; onClose: () => vo
               className={inputCls}
             />
           </Field>
+
+          {!nostr.wallet.connected && (
+            <div className="space-y-2 rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200">
+              <p className="text-[12px] font-semibold text-zinc-800">Connect a Lightning wallet</p>
+              <p className="text-[11.5px] text-zinc-500">
+                Paste a Nostr Wallet Connect string from Alby, Zeus, Primal or your node.
+              </p>
+              <input
+                value={nwcUri}
+                onChange={(e) => setNwcUri(e.target.value)}
+                placeholder="nostr+walletconnect://…"
+                className={`${inputCls} font-mono text-[11px]`}
+              />
+              <GhostBtn
+                className="w-full"
+                disabled={!nwcUri.trim() || connecting || nostr.wallet.loading}
+                onClick={connect}
+              >
+                {connecting || nostr.wallet.loading ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  "Connect wallet"
+                )}
+              </GhostBtn>
+              {nostr.wallet.error && (
+                <p className="text-[11px] text-rose-600">{nostr.wallet.error}</p>
+              )}
+            </div>
+          )}
         </div>
         <DialogFooter>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
           <PrimaryBtn
             className="!bg-amber-500 hover:!bg-amber-600"
-            onClick={() => {
-              toast.success(`Zapped ${amount.toLocaleString()} sats ⚡`);
-              onClose();
-            }}
+            disabled={busy || !profile || !nostr.wallet.connected}
+            onClick={send}
           >
-            <Zap className="size-4" /> Send zap
+            {busy ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}
+            {busy ? "Sending…" : "Send zap"}
           </PrimaryBtn>
         </DialogFooter>
       </DialogContent>
@@ -396,31 +565,110 @@ function ToggleRow({
         onClick={onToggle}
         className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${on ? knob : "bg-zinc-300"}`}
       >
-        <span className={`absolute left-0.5 top-0.5 size-4 rounded-full bg-white transition-transform ${on ? "translate-x-4" : ""}`} />
+        <span
+          className={`absolute left-0.5 top-0.5 size-4 rounded-full bg-white transition-transform ${on ? "translate-x-4" : ""}`}
+        />
       </button>
     </div>
   );
 }
 
-function ComposeModal({ open, onClose, options }: { open: boolean; onClose: () => void; options: ComposeOptions }) {
-  const [tab, setTab] = useState<"post" | "article" | "poll">(options.mode === "article" ? "article" : options.mode === "poll" ? "poll" : "post");
+function ComposeModal({
+  open,
+  onClose,
+  options,
+}: {
+  open: boolean;
+  onClose: () => void;
+  options: ComposeOptions;
+}) {
+  const nostr = useNostr();
+  const [tab, setTab] = useState<"post" | "article" | "poll">(
+    options.mode === "article" ? "article" : options.mode === "poll" ? "poll" : "post",
+  );
+  const [title, setTitle] = useState("");
   const [text, setText] = useState("");
+  const [pollOptions, setPollOptions] = useState(["", "", ""]);
   const [premium, setPremium] = useState(false);
   const [price, setPrice] = useState(500);
   const [sensitive, setSensitive] = useState(false);
   const [reason, setReason] = useState<SensitiveReason>("Nudity");
   const [warning, setWarning] = useState("");
+  const [busy, setBusy] = useState(false);
+
   useEffect(() => {
     if (open) {
       setTab(options.mode === "article" ? "article" : options.mode === "poll" ? "poll" : "post");
+      setTitle("");
       setText("");
+      setPollOptions(["", "", ""]);
       setPremium(false);
       setPrice(500);
       setSensitive(false);
       setReason("Nudity");
       setWarning("");
+      setBusy(false);
     }
   }, [open, options.mode]);
+
+  const publish = async () => {
+    if (!text.trim()) {
+      toast.error("Write something first.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const tags: string[][] = [];
+      if (premium) tags.push(["premium", String(price)]);
+      if (tab === "article") {
+        const d = title.trim()
+          ? title
+              .trim()
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, "")
+              .slice(0, 48)
+          : `article-${Date.now()}`;
+        tags.push(
+          ["d", d || `article-${Date.now()}`],
+          ["published_at", String(Math.floor(Date.now() / 1000))],
+        );
+        if (title.trim()) tags.push(["title", title.trim()]);
+        tags.push(["t", "crays-article"]);
+      }
+      if (tab === "poll") {
+        tags.push(
+          ["polltype", "singlechoice"],
+          ["endsAt", String(Math.floor(Date.now() / 1000) + 86400)],
+        );
+        pollOptions
+          .map((option) => option.trim())
+          .filter(Boolean)
+          .forEach((option, index) => tags.push(["option", `option-${index + 1}`, option]));
+      }
+
+      await nostr.publish({
+        content: text.trim(),
+        kind: tab === "article" ? 30023 : tab === "poll" ? 1068 : 1,
+        replyTo: options.mode === "reply" ? options.replyToEvent : undefined,
+        contentWarning: sensitive ? `${reason}${warning ? ` — ${warning}` : ""}` : undefined,
+        tags,
+      });
+
+      toast.success(
+        tab === "article"
+          ? "Article published to Nostr"
+          : tab === "poll"
+            ? "Poll published to Nostr"
+            : "Posted to Nostr",
+      );
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't publish that.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -446,7 +694,12 @@ function ComposeModal({ open, onClose, options }: { open: boolean; onClose: () =
         )}
         <div className="space-y-3">
           {tab === "article" && (
-            <input className={inputCls} placeholder="Article title…" />
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className={inputCls}
+              placeholder="Article title…"
+            />
           )}
           <textarea
             rows={tab === "article" ? 8 : 5}
@@ -463,17 +716,36 @@ function ComposeModal({ open, onClose, options }: { open: boolean; onClose: () =
           />
           {tab === "poll" && (
             <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <input key={i} className={inputCls} placeholder={`Option ${i}`} />
+              {pollOptions.map((option, index) => (
+                <input
+                  key={index}
+                  value={option}
+                  onChange={(e) =>
+                    setPollOptions((all) =>
+                      all.map((value, i) => (i === index ? e.target.value : value)),
+                    )
+                  }
+                  className={inputCls}
+                  placeholder={`Option ${index + 1}`}
+                />
               ))}
-              <button className="text-[12px] font-semibold text-brand">+ Add option</button>
+              <button
+                onClick={() => setPollOptions((all) => [...all, ""])}
+                className="text-[12px] font-semibold text-brand"
+              >
+                + Add option
+              </button>
             </div>
           )}
           <div className="space-y-2">
             <ToggleRow
               icon={<Crown className="size-4 text-amber-600" />}
               title="Members only"
-              hint={premium ? "Only paying members can open this post." : "Free for everyone."}
+              hint={
+                premium
+                  ? `Only paying members can open this post (${price.toLocaleString()} sats).`
+                  : "Free for everyone."
+              }
               tone="amber"
               on={premium}
               onToggle={() => setPremium((v) => !v)}
@@ -485,7 +757,9 @@ function ComposeModal({ open, onClose, options }: { open: boolean; onClose: () =
                     key={p}
                     onClick={() => setPrice(p)}
                     className={`rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors ${
-                      price === p ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200" : "text-amber-800/70"
+                      price === p
+                        ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200"
+                        : "text-amber-800/70"
                     }`}
                   >
                     {p.toLocaleString()} sats
@@ -539,24 +813,12 @@ function ComposeModal({ open, onClose, options }: { open: boolean; onClose: () =
               </div>
             )}
           </div>
-
         </div>
         <DialogFooter>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
-          <PrimaryBtn
-            onClick={() => {
-              toast.success(tab === "article" ? "Article published" : tab === "poll" ? "Poll posted" : "Posted to Nostr", {
-                description: [
-                  premium ? `Members only · ${price.toLocaleString()} sats` : null,
-                  sensitive ? `Marked sensitive · ${reason}${warning ? ` — ${warning}` : ""}` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || undefined,
-              });
-              onClose();
-            }}
-          >
-            {tab === "article" ? "Publish" : "Post"}
+          <PrimaryBtn onClick={publish} disabled={busy || !text.trim()}>
+            {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+            {busy ? "Publishing…" : tab === "article" ? "Publish" : "Post"}
           </PrimaryBtn>
         </DialogFooter>
       </DialogContent>
@@ -565,7 +827,15 @@ function ComposeModal({ open, onClose, options }: { open: boolean; onClose: () =
 }
 
 // ---------- Unlock ----------
-function UnlockModal({ open, onClose, options }: { open: boolean; onClose: () => void; options: UnlockOptions }) {
+function UnlockModal({
+  open,
+  onClose,
+  options,
+}: {
+  open: boolean;
+  onClose: () => void;
+  options: UnlockOptions;
+}) {
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[440px]">
@@ -577,14 +847,26 @@ function UnlockModal({ open, onClose, options }: { open: boolean; onClose: () =>
           <DialogDescription>{options.title ?? "This post is behind a paywall."}</DialogDescription>
         </DialogHeader>
         <div className="rounded-xl bg-gradient-to-br from-amber-50 to-orange-50 p-5 text-center ring-1 ring-amber-100">
-          <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">One-time unlock</p>
-          <p className="mt-1 text-[32px] font-bold tracking-tight text-zinc-900">{options.sats ?? 500} sats</p>
-          <p className="text-[11.5px] text-zinc-500">≈ ${((options.sats ?? 500) * 0.00064).toFixed(2)} USD · pays the creator directly</p>
+          <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">
+            One-time unlock
+          </p>
+          <p className="mt-1 text-[32px] font-bold tracking-tight text-zinc-900">
+            {options.sats ?? 500} sats
+          </p>
+          <p className="text-[11.5px] text-zinc-500">
+            ≈ ${((options.sats ?? 500) * 0.00064).toFixed(2)} USD · pays the creator directly
+          </p>
         </div>
         <ul className="space-y-1.5 text-[12.5px] text-zinc-600">
-          <li className="flex gap-2"><Check className="size-4 text-emerald-500" /> Full article + media</li>
-          <li className="flex gap-2"><Check className="size-4 text-emerald-500" /> Saved to your library</li>
-          <li className="flex gap-2"><Check className="size-4 text-emerald-500" /> Or subscribe for $49/mo unlimited</li>
+          <li className="flex gap-2">
+            <Check className="size-4 text-emerald-500" /> Full article + media
+          </li>
+          <li className="flex gap-2">
+            <Check className="size-4 text-emerald-500" /> Saved to your library
+          </li>
+          <li className="flex gap-2">
+            <Check className="size-4 text-emerald-500" /> Or subscribe for $49/mo unlimited
+          </li>
         </ul>
         <DialogFooter>
           <GhostBtn onClick={onClose}>Maybe later</GhostBtn>
@@ -604,8 +886,17 @@ function UnlockModal({ open, onClose, options }: { open: boolean; onClose: () =>
 }
 
 // ---------- Share ----------
-function ShareModal({ open, onClose, options }: { open: boolean; onClose: () => void; options: ShareOptions }) {
-  const url = options.url ?? "https://crays.net/p/abc";
+function ShareModal({
+  open,
+  onClose,
+  options,
+}: {
+  open: boolean;
+  onClose: () => void;
+  options: ShareOptions;
+}) {
+  const url =
+    options.url ?? (typeof window !== "undefined" ? window.location.href : "https://crays.app");
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[420px]">
@@ -615,7 +906,11 @@ function ShareModal({ open, onClose, options }: { open: boolean; onClose: () => 
         </DialogHeader>
         <div className="flex items-center gap-2 rounded-lg bg-zinc-100 px-3 py-2">
           <LinkIcon className="size-4 text-zinc-400" />
-          <input readOnly value={url} className="flex-1 bg-transparent text-[12.5px] text-zinc-700 outline-none" />
+          <input
+            readOnly
+            value={url}
+            className="flex-1 bg-transparent text-[12.5px] text-zinc-700 outline-none"
+          />
           <button
             onClick={() => {
               navigator.clipboard?.writeText(url);
@@ -644,48 +939,60 @@ function ShareModal({ open, onClose, options }: { open: boolean; onClose: () => 
 
 // ---------- Upgrade ----------
 function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [trial, setTrial] = useState(true);
+  const ui = useUI();
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Crown className="size-5 text-amber-500" />
-            Become a Creator
+            Creator toolkit
           </DialogTitle>
-          <DialogDescription>Everything you need to publish, monetize and grow.</DialogDescription>
+          <DialogDescription>
+            Everything Crays adds on top of the open Nostr protocol. No subscription, no platform
+            cut.
+          </DialogDescription>
         </DialogHeader>
         <div className="rounded-2xl bg-gradient-to-br from-zinc-900 to-zinc-800 p-5 text-white">
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-[40px] font-bold tracking-tight">$49</span>
-            <span className="text-[13px] text-zinc-400">/month</span>
-          </div>
-          <p className="text-[12px] text-zinc-400">Cancel anytime · 7-day free trial</p>
+          <p className="text-[28px] font-bold tracking-tight">Free</p>
+          <p className="text-[12px] text-zinc-400">
+            You pay only Lightning network fees when you zap or get paid.
+          </p>
         </div>
         <ul className="space-y-1.5 text-[12.5px] text-zinc-700">
-          {["Paid subscribers (Lightning)", "Long-form publishing & paywalls", "Link-in-bio page", "Spaces hosting", "Analytics dashboard"].map((f) => (
-            <li key={f} className="flex gap-2"><Check className="size-4 text-emerald-500" /> {f}</li>
+          {[
+            "Passkey sign-in — no seed phrase to remember",
+            "Publish notes and long-form articles to Nostr",
+            "Receive zaps straight to your Lightning wallet",
+            "Import your Instagram posts in a few clicks",
+            "Media hosted on Blossom, embedded in your events",
+            "Encrypted direct messages over NIP-04",
+          ].map((f) => (
+            <li key={f} className="flex gap-2">
+              <Check className="size-4 text-emerald-500" /> {f}
+            </li>
           ))}
         </ul>
-        <label className="flex items-center justify-between rounded-xl bg-zinc-50 px-3.5 py-2.5">
-          <span className="text-[12.5px] font-semibold text-zinc-700">Start with 7-day free trial</span>
-          <button
-            onClick={() => setTrial((v) => !v)}
-            className={`relative h-5 w-9 rounded-full transition-colors ${trial ? "bg-emerald-500" : "bg-zinc-300"}`}
-          >
-            <span className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-white transition-transform ${trial ? "translate-x-4" : ""}`} />
-          </button>
-        </label>
-        <DialogFooter>
-          <GhostBtn onClick={onClose}>Not now</GhostBtn>
-          <PrimaryBtn
-            onClick={() => {
-              toast.success(trial ? "Free trial started — welcome!" : "Welcome to Creator");
-              onClose();
-            }}
-          >
-            {trial ? "Start free trial" : "Subscribe · $49/mo"}
-          </PrimaryBtn>
+        <DialogFooter className="gap-2 sm:justify-between">
+          <GhostBtn onClick={onClose}>Close</GhostBtn>
+          <div className="flex gap-2">
+            <GhostBtn
+              onClick={() => {
+                onClose();
+                ui.openImportInstagram();
+              }}
+            >
+              Import Instagram
+            </GhostBtn>
+            <PrimaryBtn
+              onClick={() => {
+                onClose();
+                ui.openCompose({ mode: "post" });
+              }}
+            >
+              Write a post
+            </PrimaryBtn>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -694,105 +1001,343 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
 
 // ---------- Send / Receive / Top-up ----------
 function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const nostr = useNostr();
+  const price = useBtcPrice();
   const [dest, setDest] = useState("");
   const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setDest("");
+      setAmount("");
+      setBusy(false);
+    }
+  }, [open]);
+
+  const sats = Number(amount) || 0;
+  const usd = formatUsd(satsToUsd(sats, price));
+
+  const send = async () => {
+    setBusy(true);
+    try {
+      const invoice = isLightningInvoice(dest)
+        ? dest.trim()
+        : await requestPaymentInvoice(dest, sats);
+      await nostr.payInvoice(invoice);
+      toast.success(`Sent ${sats ? `${sats.toLocaleString()} sats` : "payment"}`);
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The payment didn't go through.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[440px]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><ArrowUpRight className="size-5" /> Send sats</DialogTitle>
-          <DialogDescription>Paste a Lightning invoice or address.</DialogDescription>
+          <DialogTitle className="flex items-center gap-2">
+            <ArrowUpRight className="size-5" /> Send sats
+          </DialogTitle>
+          <DialogDescription>
+            {nostr.wallet.connected
+              ? `From ${nostr.wallet.alias ?? "your Lightning wallet"}${nostr.wallet.balanceSats != null ? ` · ${nostr.wallet.balanceSats.toLocaleString()} sats` : ""}`
+              : "Connect a Lightning wallet to send payments."}
+          </DialogDescription>
         </DialogHeader>
-        <Field label="Destination" hint="lnbc… or you@wallet.com">
-          <textarea value={dest} onChange={(e) => setDest(e.target.value)} rows={3} className={`${inputCls} resize-none font-mono text-[12px]`} placeholder="lnbc1…" />
-        </Field>
-        <Field label="Amount (sats)">
-          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className={inputCls} placeholder="0" />
-        </Field>
+        {!nostr.wallet.connected ? (
+          <WalletConnectBlock />
+        ) : (
+          <>
+            <Field label="Destination" hint="lnbc… invoice, you@wallet.com address, or LNURL.">
+              <textarea
+                value={dest}
+                onChange={(e) => setDest(e.target.value)}
+                rows={3}
+                className={`${inputCls} resize-none font-mono text-[12px]`}
+                placeholder="lnbc1…"
+              />
+            </Field>
+            {!isLightningInvoice(dest) && (
+              <Field label="Amount (sats)" hint={sats ? `≈ ${usd}` : undefined}>
+                <input
+                  type="number"
+                  min={1}
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className={inputCls}
+                  placeholder="0"
+                />
+              </Field>
+            )}
+          </>
+        )}
         <DialogFooter>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
           <PrimaryBtn
-            disabled={!dest || !amount}
-            onClick={() => {
-              toast.success(`Sent ${amount} sats`);
-              onClose();
-            }}
+            disabled={!nostr.wallet.connected || !dest.trim() || busy}
+            onClick={() => void send()}
           >
-            <Send className="size-4" /> Send
+            {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+            {busy ? "Sending…" : "Send"}
           </PrimaryBtn>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
+
 function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const nostr = useNostr();
+  const price = useBtcPrice();
   const [amount, setAmount] = useState(1000);
-  const addr = "you@crays.net";
+  const [invoice, setInvoice] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setAmount(1000);
+      setInvoice("");
+      setBusy(false);
+    }
+  }, [open]);
+
+  const generate = async () => {
+    setBusy(true);
+    try {
+      const created = await nostr.makeInvoice(amount, "Crays deposit");
+      setInvoice(created.invoice);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Your wallet couldn't create an invoice.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[420px]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><ArrowDownLeft className="size-5" /> Receive sats</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <ArrowDownLeft className="size-5" /> Receive sats
+          </DialogTitle>
+          <DialogDescription>
+            {nostr.wallet.connected
+              ? "Create a Lightning invoice from your connected wallet."
+              : "Connect a Lightning wallet to receive payments."}
+          </DialogDescription>
         </DialogHeader>
-        <div className="rounded-xl bg-zinc-50 p-5 text-center ring-1 ring-zinc-100">
-          <div className="mx-auto grid size-44 place-items-center rounded-xl bg-white p-3 shadow-sm">
-            <FauxQR />
-          </div>
-          <p className="mt-3 font-mono text-[12px] text-zinc-700">{addr}</p>
-          <button
-            onClick={() => { navigator.clipboard?.writeText(addr); toast.success("Address copied"); }}
-            className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand hover:underline"
-          ><Copy className="size-3" /> Copy</button>
-        </div>
-        <Field label="Amount (optional)">
-          <input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} className={inputCls} />
-        </Field>
+        {!nostr.wallet.connected ? (
+          <WalletConnectBlock />
+        ) : (
+          <>
+            {invoice ? (
+              <div className="rounded-xl bg-zinc-50 p-5 text-center ring-1 ring-zinc-100">
+                <div className="mx-auto grid size-44 place-items-center rounded-xl bg-white p-3 shadow-sm">
+                  <QRCodeSVG value={invoice.toUpperCase()} size={152} level="M" />
+                </div>
+                <p className="mt-3 break-all font-mono text-[10.5px] text-zinc-600">
+                  {invoice.slice(0, 48)}…
+                </p>
+                <button
+                  onClick={() => {
+                    void navigator.clipboard.writeText(invoice);
+                    toast.success("Invoice copied");
+                  }}
+                  className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand hover:underline"
+                >
+                  <Copy className="size-3" /> Copy invoice
+                </button>
+              </div>
+            ) : (
+              <Field label="Amount (sats)" hint={formatUsd(satsToUsd(amount, price))}>
+                <input
+                  type="number"
+                  min={1}
+                  value={amount}
+                  onChange={(e) => setAmount(Math.max(1, Number(e.target.value) || 1))}
+                  className={inputCls}
+                />
+              </Field>
+            )}
+          </>
+        )}
         <DialogFooter>
           <GhostBtn onClick={onClose}>Close</GhostBtn>
-          <PrimaryBtn onClick={() => { toast.success("Invoice copied"); onClose(); }}>
-            Generate invoice
-          </PrimaryBtn>
+          {nostr.wallet.connected && (
+            <PrimaryBtn
+              disabled={busy}
+              onClick={() =>
+                void (invoice
+                  ? (navigator.clipboard.writeText(invoice),
+                    toast.success("Invoice copied"),
+                    onClose())
+                  : generate())
+              }
+            >
+              {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+              {invoice ? "Copy invoice" : "Generate invoice"}
+            </PrimaryBtn>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
+
 function TopUpModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [method, setMethod] = useState<"card" | "exchange">("card");
+  const nostr = useNostr();
+  const price = useBtcPrice();
+  const [usd, setUsd] = useState(20);
+  const [invoice, setInvoice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const sats = price ? Math.max(1, Math.round((usd / price.usd) * 100_000_000)) : 0;
+
+  useEffect(() => {
+    if (open) {
+      setUsd(20);
+      setInvoice("");
+      setBusy(false);
+    }
+  }, [open]);
+
+  const deposit = async () => {
+    setBusy(true);
+    try {
+      const created = await nostr.makeInvoice(sats, "Crays top-up");
+      setInvoice(created.invoice);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Your wallet couldn't create an invoice.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[440px]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><CreditCard className="size-5" /> Top up wallet</DialogTitle>
-          <DialogDescription>Buy sats with card or transfer from an exchange.</DialogDescription>
+          <DialogTitle className="flex items-center gap-2">
+            <CreditCard className="size-5" /> Top up wallet
+          </DialogTitle>
+          <DialogDescription>
+            Generate a Lightning invoice from your wallet, then pay it from any exchange or card
+            on-ramp.
+          </DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-2">
-          {(["card", "exchange"] as const).map((m) => (
+        {!nostr.wallet.connected ? (
+          <WalletConnectBlock />
+        ) : invoice ? (
+          <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
+            <div className="mx-auto grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm">
+              <QRCodeSVG value={invoice.toUpperCase()} size={136} level="M" />
+            </div>
+            <p className="mt-2 text-[12px] font-semibold text-zinc-800">
+              {sats.toLocaleString()} sats
+            </p>
             <button
-              key={m}
-              onClick={() => setMethod(m)}
-              className={`rounded-xl px-3 py-3 text-left text-[12.5px] font-semibold ring-1 transition-colors ${
-                method === m ? "bg-zinc-900 text-white ring-zinc-900" : "bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50"
-              }`}
+              onClick={() => {
+                void navigator.clipboard.writeText(invoice);
+                toast.success("Invoice copied");
+              }}
+              className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand hover:underline"
             >
-              {m === "card" ? "Credit card" : "From exchange"}
-              <p className={`mt-1 text-[10.5px] font-medium ${method === m ? "text-zinc-300" : "text-zinc-500"}`}>
-                {m === "card" ? "Apple Pay · Google Pay" : "Strike, River, Coinbase"}
-              </p>
+              <Copy className="size-3" /> Copy invoice
             </button>
-          ))}
-        </div>
-        <Field label="Amount (USD)">
-          <input type="number" defaultValue={20} className={inputCls} />
-        </Field>
+          </div>
+        ) : (
+          <>
+            <Field
+              label="Amount (USD)"
+              hint={sats ? `≈ ${sats.toLocaleString()} sats` : "Waiting for the live BTC price…"}
+            >
+              <input
+                type="number"
+                min={1}
+                value={usd}
+                onChange={(e) => setUsd(Math.max(1, Number(e.target.value) || 0))}
+                className={inputCls}
+              />
+            </Field>
+            <div className="grid grid-cols-3 gap-2">
+              {[10, 20, 50, 100, 250, 500].map((preset) => (
+                <button
+                  key={preset}
+                  onClick={() => setUsd(preset)}
+                  className={`rounded-lg py-2 text-[12px] font-semibold ring-1 transition-colors ${
+                    usd === preset
+                      ? "bg-zinc-900 text-white ring-zinc-900"
+                      : "bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50"
+                  }`}
+                >
+                  ${preset}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
         <DialogFooter>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
-          <PrimaryBtn onClick={() => { toast.success("Top-up in progress"); onClose(); }}>
-            Continue
-          </PrimaryBtn>
+          {nostr.wallet.connected && (
+            <PrimaryBtn
+              disabled={busy || !sats}
+              onClick={() => void (invoice ? onClose() : deposit())}
+            >
+              {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+              {invoice ? "Done" : "Generate invoice"}
+            </PrimaryBtn>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function WalletConnectBlock() {
+  const nostr = useNostr();
+  const [uri, setUri] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="space-y-2 rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200">
+      <p className="text-[12px] font-semibold text-zinc-800">Connect a Lightning wallet</p>
+      <p className="text-[11.5px] text-zinc-500">
+        Paste a Nostr Wallet Connect string from Alby, Zeus, Primal or your own node.
+      </p>
+      <input
+        value={uri}
+        onChange={(e) => setUri(e.target.value)}
+        placeholder="nostr+walletconnect://…"
+        className={`${inputCls} font-mono text-[11px]`}
+      />
+      <GhostBtn
+        className="w-full"
+        disabled={!uri.trim() || busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await nostr.connectWallet(uri);
+            toast.success("Lightning wallet connected");
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Couldn't connect that wallet.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy || nostr.wallet.loading ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          "Connect wallet"
+        )}
+      </GhostBtn>
+      {nostr.wallet.error && <p className="text-[11px] text-rose-600">{nostr.wallet.error}</p>}
+    </div>
   );
 }
 
@@ -813,7 +1358,11 @@ function TxDetailSheet({ tx, onClose }: { tx: TxDetail | null; onClose: () => vo
                 <p className="truncate text-[13px] font-semibold text-zinc-900">{tx.who}</p>
                 <p className="truncate text-[11.5px] text-zinc-500">{tx.note}</p>
               </div>
-              <p className={`text-[14px] font-bold tabular-nums ${tx.kind === "in" ? "text-emerald-600" : "text-zinc-900"}`}>{tx.amount}</p>
+              <p
+                className={`text-[14px] font-bold tabular-nums ${tx.kind === "in" ? "text-emerald-600" : "text-zinc-900"}`}
+              >
+                {tx.amount}
+              </p>
             </div>
             <dl className="space-y-2 text-[12.5px]">
               {[
@@ -830,10 +1379,18 @@ function TxDetailSheet({ tx, onClose }: { tx: TxDetail | null; onClose: () => vo
               ))}
             </dl>
             <div className="flex gap-2">
-              <GhostBtn className="flex-1" onClick={() => { navigator.clipboard?.writeText(tx.id); toast.success("Tx ID copied"); }}>
+              <GhostBtn
+                className="flex-1"
+                onClick={() => {
+                  navigator.clipboard?.writeText(tx.id);
+                  toast.success("Tx ID copied");
+                }}
+              >
                 <Copy className="size-4" /> Copy ID
               </GhostBtn>
-              <PrimaryBtn className="flex-1" onClick={onClose}>Done</PrimaryBtn>
+              <PrimaryBtn className="flex-1" onClick={onClose}>
+                Done
+              </PrimaryBtn>
             </div>
           </div>
         )}
@@ -844,29 +1401,124 @@ function TxDetailSheet({ tx, onClose }: { tx: TxDetail | null; onClose: () => vo
 
 // ---------- Edit profile ----------
 function EditProfileModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const nostr = useNostr();
+  const profile = nostr.account?.profile;
+  const [name, setName] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [about, setAbout] = useState("");
+  const [picture, setPicture] = useState("");
+  const [website, setWebsite] = useState("");
+  const [lud16, setLud16] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setName(profile?.name ?? "");
+    setDisplayName(profile?.displayName ?? "");
+    setAbout(profile?.about ?? "");
+    setPicture(profile?.picture ?? "");
+    setWebsite(profile?.website ?? "");
+    setLud16(profile?.lud16 ?? "");
+    setBusy(false);
+  }, [open, profile]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await nostr.updateProfile({
+        name: name.trim(),
+        displayName: displayName.trim() || name.trim(),
+        about: about.trim(),
+        picture: picture.trim(),
+        website: website.trim(),
+        lud16: lud16.trim(),
+      });
+      toast.success("Profile published to Nostr");
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't save your profile.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>Edit profile</DialogTitle>
-          <DialogDescription>Your public face on Nostr.</DialogDescription>
+          <DialogDescription>
+            Published as a kind-0 metadata event signed by your key.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="flex items-center gap-3">
-            <AvatarTile seed="Alex Stellar" size={64} />
-            <button className="rounded-lg bg-zinc-100 px-3 py-2 text-[12px] font-semibold hover:bg-zinc-200">Change photo</button>
+            {picture ? (
+              <img src={picture} alt="" className="size-16 rounded-full object-cover" />
+            ) : (
+              <AvatarTile seed={displayName || name || nostr.account?.npub || "Crays"} size={64} />
+            )}
+            <div className="flex-1">
+              <Field label="Avatar URL">
+                <input
+                  value={picture}
+                  onChange={(e) => setPicture(e.target.value)}
+                  placeholder="https://…"
+                  className={inputCls}
+                />
+              </Field>
+            </div>
           </div>
-          <Field label="Display name"><input defaultValue="Alex Stellar" className={inputCls} /></Field>
-          <Field label="Handle"><input defaultValue="@alex" className={inputCls} /></Field>
-          <Field label="Bio"><textarea rows={3} defaultValue="Building the open creator economy." className={`${inputCls} resize-none`} /></Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Location"><input defaultValue="Lisbon, PT" className={inputCls} /></Field>
-            <Field label="Website"><input defaultValue="stellar.app" className={inputCls} /></Field>
+            <Field label="Display name">
+              <input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className={inputCls}
+              />
+            </Field>
+            <Field label="Username">
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="satoshi"
+                className={inputCls}
+              />
+            </Field>
+          </div>
+          <Field label="Bio">
+            <textarea
+              rows={3}
+              value={about}
+              onChange={(e) => setAbout(e.target.value)}
+              className={`${inputCls} resize-none`}
+            />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Website">
+              <input
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
+                placeholder="https://…"
+                className={inputCls}
+              />
+            </Field>
+            <Field label="Lightning address" hint="So people can zap you.">
+              <input
+                value={lud16}
+                onChange={(e) => setLud16(e.target.value)}
+                placeholder="you@wallet.com"
+                className={inputCls}
+              />
+            </Field>
           </div>
         </div>
         <DialogFooter>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
-          <PrimaryBtn onClick={() => { toast.success("Profile saved"); onClose(); }}>Save</PrimaryBtn>
+          <PrimaryBtn disabled={busy} onClick={() => void save()}>
+            {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+            {busy ? "Publishing…" : "Save"}
+          </PrimaryBtn>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -874,7 +1526,15 @@ function EditProfileModal({ open, onClose }: { open: boolean; onClose: () => voi
 }
 
 // ---------- Link block ----------
-function LinkBlockModal({ open, existing, onClose }: { open: boolean; existing: { title: string; url: string } | null; onClose: () => void }) {
+function LinkBlockModal({
+  open,
+  existing,
+  onClose,
+}: {
+  open: boolean;
+  existing: { title: string; url: string } | null;
+  onClose: () => void;
+}) {
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[440px]">
@@ -882,13 +1542,40 @@ function LinkBlockModal({ open, existing, onClose }: { open: boolean; existing: 
           <DialogTitle>{existing ? "Edit link" : "Add link block"}</DialogTitle>
           <DialogDescription>Appears on your link-in-bio page.</DialogDescription>
         </DialogHeader>
-        <Field label="Title"><input defaultValue={existing?.title ?? ""} placeholder="My latest essay" className={inputCls} /></Field>
-        <Field label="URL"><input defaultValue={existing?.url ?? ""} placeholder="https://…" className={inputCls} /></Field>
-        <Field label="Subtitle (optional)"><input className={inputCls} placeholder="Read on Crays" /></Field>
+        <Field label="Title">
+          <input
+            defaultValue={existing?.title ?? ""}
+            placeholder="My latest essay"
+            className={inputCls}
+          />
+        </Field>
+        <Field label="URL">
+          <input defaultValue={existing?.url ?? ""} placeholder="https://…" className={inputCls} />
+        </Field>
+        <Field label="Subtitle (optional)">
+          <input className={inputCls} placeholder="Read on Crays" />
+        </Field>
         <DialogFooter>
-          {existing && <GhostBtn className="!text-rose-600 mr-auto" onClick={() => { toast.success("Link removed"); onClose(); }}>Delete</GhostBtn>}
+          {existing && (
+            <GhostBtn
+              className="!text-rose-600 mr-auto"
+              onClick={() => {
+                toast.success("Link removed");
+                onClose();
+              }}
+            >
+              Delete
+            </GhostBtn>
+          )}
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
-          <PrimaryBtn onClick={() => { toast.success(existing ? "Link updated" : "Link added"); onClose(); }}>{existing ? "Save" : "Add"}</PrimaryBtn>
+          <PrimaryBtn
+            onClick={() => {
+              toast.success(existing ? "Link updated" : "Link added");
+              onClose();
+            }}
+          >
+            {existing ? "Save" : "Add"}
+          </PrimaryBtn>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -898,7 +1585,26 @@ function LinkBlockModal({ open, existing, onClose }: { open: boolean; existing: 
 // ---------- New DM ----------
 function NewDMModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
-  const suggestions = ["Jack Dorsey", "Lyn Alden", "Elena Vega", "Marty Bent", "Pierre Rochard"];
+  const [value, setValue] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setValue("");
+      setError("");
+    }
+  }, [open]);
+
+  const start = () => {
+    const pubkey = normalizePubkey(value);
+    if (!pubkey) {
+      setError("Enter a valid npub, nprofile or hex public key.");
+      return;
+    }
+    navigate({ to: "/messages", search: { to: pubkeyToNpub(pubkey) } });
+    onClose();
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[420px]">
@@ -906,23 +1612,28 @@ function NewDMModal({ open, onClose }: { open: boolean; onClose: () => void }) {
           <DialogTitle>New message</DialogTitle>
           <DialogDescription>End-to-end encrypted on Nostr.</DialogDescription>
         </DialogHeader>
-        <input placeholder="Search by name or npub…" className={inputCls} />
-        <ul className="space-y-1">
-          {suggestions.map((s) => (
-            <li key={s}>
-              <button
-                onClick={() => { navigate({ to: "/messages" }); toast.success(`Started chat with ${s}`); onClose(); }}
-                className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left hover:bg-zinc-50"
-              >
-                <AvatarTile seed={s} size={36} />
-                <div>
-                  <p className="text-[13px] font-semibold text-zinc-900">{s}</p>
-                  <p className="text-[11px] text-zinc-500">@{s.toLowerCase().replace(/[^a-z]/g, "")}</p>
-                </div>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <Field label="Recipient" hint="Paste their npub or nprofile.">
+          <input
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setError("");
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") start();
+            }}
+            placeholder="npub1…"
+            className={inputCls}
+            autoFocus
+          />
+        </Field>
+        {error && <p className="text-[11.5px] text-rose-600">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <GhostBtn onClick={onClose}>Cancel</GhostBtn>
+          <PrimaryBtn disabled={!value.trim()} onClick={start}>
+            Start chat
+          </PrimaryBtn>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -930,23 +1641,76 @@ function NewDMModal({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 // ---------- Add relay ----------
 function AddRelayModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [url, setUrl] = useState("");
+  const [custom, setCustom] = useState<string[]>(() => getCustomRelays());
+
+  useEffect(() => {
+    if (open) {
+      setUrl("");
+      setCustom(getCustomRelays());
+    }
+  }, [open]);
+
+  const add = () => {
+    if (!addRelay(url)) {
+      toast.error("Enter a valid relay URL, like wss://relay.example.com");
+      return;
+    }
+    setCustom(getCustomRelays());
+    setUrl("");
+    toast.success("Relay added");
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-[440px]">
+      <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><Server className="size-5" /> Add relay</DialogTitle>
-          <DialogDescription>Relays store and broadcast your Nostr posts.</DialogDescription>
+          <DialogTitle className="flex items-center gap-2">
+            <Server className="size-5" /> Add relay
+          </DialogTitle>
+          <DialogDescription>
+            Relays store and broadcast your Nostr posts. Added relays are used for reads and writes.
+          </DialogDescription>
         </DialogHeader>
         <Field label="Relay URL" hint="wss://relay.example.com">
-          <input className={`${inputCls} font-mono`} placeholder="wss://" />
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+            className={`${inputCls} font-mono`}
+            placeholder="wss://"
+          />
         </Field>
-        <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-3 py-2.5">
-          <span className="text-[12.5px] font-semibold text-zinc-700">Read & write</span>
-          <span className="text-[11px] text-zinc-500">Default</span>
-        </div>
+        {custom.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+              Your relays
+            </p>
+            {custom.map((relay) => (
+              <div
+                key={relay}
+                className="flex items-center justify-between gap-2 rounded-lg bg-zinc-50 px-3 py-2 ring-1 ring-zinc-100"
+              >
+                <span className="truncate font-mono text-[11.5px] text-zinc-700">{relay}</span>
+                <button
+                  onClick={() => {
+                    removeRelay(relay);
+                    setCustom(getCustomRelays());
+                    toast.success("Relay removed");
+                  }}
+                  className="text-[11px] font-semibold text-rose-600 hover:underline"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <DialogFooter>
-          <GhostBtn onClick={onClose}>Cancel</GhostBtn>
-          <PrimaryBtn onClick={() => { toast.success("Relay connected"); onClose(); }}>Add relay</PrimaryBtn>
+          <GhostBtn onClick={onClose}>Close</GhostBtn>
+          <PrimaryBtn disabled={!url.trim()} onClick={add}>
+            Add relay
+          </PrimaryBtn>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -955,40 +1719,71 @@ function AddRelayModal({ open, onClose }: { open: boolean; onClose: () => void }
 
 // ---------- Reveal key ----------
 function RevealKeyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const nostr = useNostr();
   const [revealed, setRevealed] = useState(false);
-  const nsec = "nsec1q9k7m4hc2vplh3yffx8zh2k9j7n4mfqyrqzc83lz5d3vk8w7nxxsv0plkz";
-  useEffect(() => { if (!open) setRevealed(false); }, [open]);
+  const nsec = nostr.exportNsec();
+  useEffect(() => {
+    if (!open) setRevealed(false);
+  }, [open]);
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle className="text-rose-600">⚠ Reveal your secret key</DialogTitle>
           <DialogDescription>
-            Your nsec controls your identity. Anyone with it can post as you and drain your funds. Store it in a password manager.
+            {nsec
+              ? "Your nsec controls your identity. Anyone with it can post as you and drain your funds. Store it in a password manager."
+              : "Your key is managed by your signer or browser extension, so Crays can't display it here. Export it from your signer app."}
           </DialogDescription>
         </DialogHeader>
-        <div className="rounded-xl bg-zinc-900 p-4 font-mono text-[11.5px] break-all text-zinc-100">
-          {revealed ? nsec : "•".repeat(60)}
-        </div>
-        <div className="flex gap-2">
-          <GhostBtn className="flex-1" onClick={() => setRevealed((v) => !v)}>
-            {revealed ? <><EyeOff className="size-4" /> Hide</> : <><Eye className="size-4" /> Reveal</>}
-          </GhostBtn>
-          <GhostBtn
-            className="flex-1"
-            onClick={() => { navigator.clipboard?.writeText(nsec); toast.success("Key copied — store it safely"); }}
-          >
-            <Copy className="size-4" /> Copy
-          </GhostBtn>
-        </div>
-        <DialogFooter><PrimaryBtn onClick={onClose}>Done</PrimaryBtn></DialogFooter>
+        {nsec && (
+          <>
+            <div className="rounded-xl bg-zinc-900 p-4 font-mono text-[11.5px] break-all text-zinc-100">
+              {revealed ? nsec : "•".repeat(60)}
+            </div>
+            <div className="flex gap-2">
+              <GhostBtn className="flex-1" onClick={() => setRevealed((v) => !v)}>
+                {revealed ? (
+                  <>
+                    <EyeOff className="size-4" /> Hide
+                  </>
+                ) : (
+                  <>
+                    <Eye className="size-4" /> Reveal
+                  </>
+                )}
+              </GhostBtn>
+              <GhostBtn
+                className="flex-1"
+                onClick={() => {
+                  void navigator.clipboard.writeText(nsec);
+                  toast.success("Key copied — store it safely");
+                }}
+              >
+                <Copy className="size-4" /> Copy
+              </GhostBtn>
+            </div>
+          </>
+        )}
+        <DialogFooter>
+          <PrimaryBtn onClick={onClose}>Done</PrimaryBtn>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
 // ---------- Logout confirm ----------
-function LogoutConfirm({ open, onClose, onConfirm }: { open: boolean; onClose: () => void; onConfirm: () => void }) {
+function LogoutConfirm({
+  open,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
   return (
     <AlertDialog open={open} onOpenChange={(o) => !o && onClose()}>
       <AlertDialogContent>
@@ -1002,7 +1797,10 @@ function LogoutConfirm({ open, onClose, onConfirm }: { open: boolean; onClose: (
           <AlertDialogCancel onClick={onClose}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             className="bg-rose-600 hover:bg-rose-700"
-            onClick={() => { onConfirm(); onClose(); }}
+            onClick={() => {
+              onConfirm();
+              onClose();
+            }}
           >
             Log out
           </AlertDialogAction>
@@ -1013,34 +1811,82 @@ function LogoutConfirm({ open, onClose, onConfirm }: { open: boolean; onClose: (
 }
 
 // ---------- Command palette ----------
-function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+function CommandPalette({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
   const navigate = useNavigate();
-  const go = (to: string) => { onOpenChange(false); navigate({ to }); };
+  const ui = useUI();
+  const go = (to: string) => {
+    onOpenChange(false);
+    navigate({ to });
+  };
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
       <CommandInput placeholder="Search posts, creators, commands…" />
       <CommandList>
         <CommandEmpty>No results.</CommandEmpty>
         <CommandGroup heading="Navigate">
-          <CommandItem onSelect={() => go("/")}><Home className="size-4" /> Home</CommandItem>
-          <CommandItem onSelect={() => go("/discover")}><Compass className="size-4" /> Discover</CommandItem>
-          <CommandItem onSelect={() => go("/following")}><Users className="size-4" /> Following</CommandItem>
-          <CommandItem onSelect={() => go("/messages")}><MessageCircle className="size-4" /> Messages</CommandItem>
-          <CommandItem onSelect={() => go("/notifications")}><Bell className="size-4" /> Notifications</CommandItem>
-          <CommandItem onSelect={() => go("/bookmarks")}><Bookmark className="size-4" /> Bookmarks</CommandItem>
-          <CommandItem onSelect={() => go("/premium")}><Crown className="size-4" /> Premium</CommandItem>
-          <CommandItem onSelect={() => go("/wallet")}><Wallet className="size-4" /> Wallet</CommandItem>
-          <CommandItem onSelect={() => go("/profile")}><User className="size-4" /> Profile</CommandItem>
-          <CommandItem onSelect={() => go("/settings")}><Cog className="size-4" /> Settings</CommandItem>
+          <CommandItem onSelect={() => go("/")}>
+            <Home className="size-4" /> Home
+          </CommandItem>
+          <CommandItem onSelect={() => go("/discover")}>
+            <Compass className="size-4" /> Discover
+          </CommandItem>
+          <CommandItem onSelect={() => go("/following")}>
+            <Users className="size-4" /> Following
+          </CommandItem>
+          <CommandItem onSelect={() => go("/messages")}>
+            <MessageCircle className="size-4" /> Messages
+          </CommandItem>
+          <CommandItem onSelect={() => go("/notifications")}>
+            <Bell className="size-4" /> Notifications
+          </CommandItem>
+          <CommandItem onSelect={() => go("/bookmarks")}>
+            <Bookmark className="size-4" /> Bookmarks
+          </CommandItem>
+          <CommandItem onSelect={() => go("/premium")}>
+            <Crown className="size-4" /> Creator tools
+          </CommandItem>
+          <CommandItem onSelect={() => go("/wallet")}>
+            <Wallet className="size-4" /> Wallet
+          </CommandItem>
+          <CommandItem onSelect={() => go("/profile")}>
+            <User className="size-4" /> Profile
+          </CommandItem>
+          <CommandItem onSelect={() => go("/settings")}>
+            <Cog className="size-4" /> Settings
+          </CommandItem>
         </CommandGroup>
         <CommandSeparator />
-        <CommandGroup heading="Creators">
-          {["Lyn Alden", "Jack Dorsey", "Marty Bent", "Elena Vega"].map((n) => (
-            <CommandItem key={n} onSelect={() => { onOpenChange(false); toast.success(`Opening ${n}`); }}>
-              <span className="grid size-5 place-items-center rounded-full bg-zinc-200 text-[9px] font-bold text-zinc-700">{n[0]}</span>
-              {n}
-            </CommandItem>
-          ))}
+        <CommandGroup heading="Actions">
+          <CommandItem
+            onSelect={() => {
+              onOpenChange(false);
+              ui.openCompose({ mode: "post" });
+            }}
+          >
+            <Pencil className="size-4" /> Write a post
+          </CommandItem>
+          <CommandItem
+            onSelect={() => {
+              onOpenChange(false);
+              ui.openImportInstagram();
+            }}
+          >
+            <Camera className="size-4" /> Import from Instagram
+          </CommandItem>
+          <CommandItem
+            onSelect={() => {
+              onOpenChange(false);
+              ui.openAuth({ intent: "switch accounts" });
+            }}
+          >
+            <LogIn className="size-4" /> Sign in / Create
+          </CommandItem>
         </CommandGroup>
       </CommandList>
     </CommandDialog>
@@ -1053,16 +1899,27 @@ function ImagePickerModal({ open, onClose }: { open: boolean; onClose: () => voi
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><ImageIcon className="size-5" /> Attach media</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <ImageIcon className="size-5" /> Attach media
+          </DialogTitle>
         </DialogHeader>
         <div className="grid place-items-center rounded-xl border-2 border-dashed border-zinc-200 px-6 py-10 text-center hover:border-brand/40 hover:bg-brand/5">
           <ImageIcon className="size-8 text-zinc-300" />
-          <p className="mt-2 text-[13px] font-semibold text-zinc-700">Drag & drop or click to upload</p>
+          <p className="mt-2 text-[13px] font-semibold text-zinc-700">
+            Drag & drop or click to upload
+          </p>
           <p className="text-[11px] text-zinc-500">JPG · PNG · GIF · MP4 up to 25 MB</p>
         </div>
         <DialogFooter>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
-          <PrimaryBtn onClick={() => { toast.success("Image attached"); onClose(); }}>Use sample</PrimaryBtn>
+          <PrimaryBtn
+            onClick={() => {
+              toast.success("Image attached");
+              onClose();
+            }}
+          >
+            Use sample
+          </PrimaryBtn>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1075,20 +1932,37 @@ function PollBuilderModal({ open, onClose }: { open: boolean; onClose: () => voi
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><BarChart3 className="size-5" /> Create a poll</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <BarChart3 className="size-5" /> Create a poll
+          </DialogTitle>
         </DialogHeader>
-        <Field label="Question"><input className={inputCls} placeholder="Will BTC close above $X?" /></Field>
+        <Field label="Question">
+          <input className={inputCls} placeholder="Will BTC close above $X?" />
+        </Field>
         {[1, 2, 3, 4].map((i) => (
-          <input key={i} className={inputCls} placeholder={`Option ${i}${i > 2 ? " (optional)" : ""}`} />
+          <input
+            key={i}
+            className={inputCls}
+            placeholder={`Option ${i}${i > 2 ? " (optional)" : ""}`}
+          />
         ))}
         <Field label="Duration">
           <select className={inputCls}>
-            <option>1 day</option><option>3 days</option><option>1 week</option>
+            <option>1 day</option>
+            <option>3 days</option>
+            <option>1 week</option>
           </select>
         </Field>
         <DialogFooter>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
-          <PrimaryBtn onClick={() => { toast.success("Poll posted"); onClose(); }}>Post poll</PrimaryBtn>
+          <PrimaryBtn
+            onClick={() => {
+              toast.success("Poll posted");
+              onClose();
+            }}
+          >
+            Post poll
+          </PrimaryBtn>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1098,39 +1972,45 @@ function PollBuilderModal({ open, onClose }: { open: boolean; onClose: () => voi
 // ---------- Decorative QR ----------
 function FauxQR() {
   const cells = Array.from({ length: 11 * 11 }, (_, i) => {
-    const x = i % 11, y = Math.floor(i / 11);
+    const x = i % 11,
+      y = Math.floor(i / 11);
     const corner = (x < 3 && y < 3) || (x > 7 && y < 3) || (x < 3 && y > 7);
-    return corner || ((x * 73 + y * 131 + (x ^ y) * 17) % 7 < 3);
+    return corner || (x * 73 + y * 131 + (x ^ y) * 17) % 7 < 3;
   });
   return (
     <div className="grid h-full w-full grid-cols-11 gap-[1.5px]">
-      {cells.map((on, i) => <div key={i} className={`rounded-[2px] ${on ? "bg-zinc-900" : "bg-white"}`} />)}
+      {cells.map((on, i) => (
+        <div key={i} className={`rounded-[2px] ${on ? "bg-zinc-900" : "bg-white"}`} />
+      ))}
     </div>
   );
 }
 
 // ---------- Auth Modal ----------
 type AuthTab = "passkey" | "nostr" | "keys";
-type NostrSub = "bunker" | "nostr-connect" | "nwc";
+type NostrSub = "bunker" | "nostr-connect" | "nip07";
 
 function AuthModal({
   open,
   options,
   onClose,
-  onSignIn,
+  onSignedIn,
 }: {
   open: boolean;
   options: AuthOptions;
   onClose: () => void;
-  onSignIn: (u: AuthUser) => void;
+  onSignedIn: () => void;
 }) {
+  const nostr = useNostr();
   const [tab, setTab] = useState<AuthTab>("passkey");
   const [mode, setMode] = useState<"signin" | "create">("signin");
   const [busy, setBusy] = useState<null | string>(null);
   const [nostrSub, setNostrSub] = useState<NostrSub>("bunker");
   const [bunker, setBunker] = useState("");
   const [nsec, setNsec] = useState("");
-  const [npub, setNpub] = useState("");
+  const [connectUri, setConnectUri] = useState("");
+  const [waitingConnect, setWaitingConnect] = useState(false);
+  const connectStarted = useRef(false);
 
   useEffect(() => {
     if (open) {
@@ -1140,24 +2020,44 @@ function AuthModal({
       setNostrSub("bunker");
       setBunker("");
       setNsec("");
-      setNpub("");
+      setConnectUri("");
+      setWaitingConnect(false);
+      connectStarted.current = false;
     }
   }, [open]);
 
-  const finish = (method: AuthMethod, name = "You Stellar", handle = "@you") => {
-    setBusy(null);
-    onSignIn({
-      name,
-      handle,
-      method,
-      npub: "npub1q9rk5l9smc3w4hk7xkfny0pl" + Math.random().toString(36).slice(2, 6) + "u7e2x",
-    });
-    toast.success(`Signed in with ${labelFor(method)}`);
-  };
+  // Kick off the NIP-46 nostr-connect handshake the first time that pane opens.
+  useEffect(() => {
+    if (!open || nostrSub !== "nostr-connect" || connectStarted.current) return;
+    connectStarted.current = true;
+    const pending = nostr.startNostrConnect();
+    setConnectUri(pending.uri);
+    setWaitingConnect(true);
+    pending
+      .wait()
+      .then(() => {
+        toast.success("Connected to your signer");
+        onSignedIn();
+      })
+      .catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : "The signer didn't approve in time.");
+      })
+      .finally(() => setWaitingConnect(false));
+    // startNostrConnect is stable for the lifetime of the provider
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, nostrSub]);
 
-  const runWithSpinner = (label: string, method: AuthMethod) => {
+  const run = async (label: string, action: () => Promise<void>, success = "Signed in") => {
     setBusy(label);
-    setTimeout(() => finish(method), 900);
+    try {
+      await action();
+      toast.success(success);
+      onSignedIn();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Something went wrong.");
+    } finally {
+      setBusy(null);
+    }
   };
 
   return (
@@ -1190,12 +2090,28 @@ function AuthModal({
 
         {/* Method tabs */}
         <div className="mt-1 grid grid-cols-3 gap-2">
-          <TabCard active={tab === "passkey"} onClick={() => setTab("passkey")} icon={Fingerprint} title="Passkey" badge="Recommended" />
-          <TabCard active={tab === "nostr"} onClick={() => setTab("nostr")} icon={Radio} title="Nostr signer" />
-          <TabCard active={tab === "keys"} onClick={() => setTab("keys")} icon={KeyRound} title="npub / nsec" />
+          <TabCard
+            active={tab === "passkey"}
+            onClick={() => setTab("passkey")}
+            icon={Fingerprint}
+            title="Passkey"
+            badge="Recommended"
+          />
+          <TabCard
+            active={tab === "nostr"}
+            onClick={() => setTab("nostr")}
+            icon={Radio}
+            title="Nostr signer"
+          />
+          <TabCard
+            active={tab === "keys"}
+            onClick={() => setTab("keys")}
+            icon={KeyRound}
+            title="nsec"
+          />
         </div>
 
-        <div className="mt-1 min-h-[180px]">
+        <div className="mt-1 min-h-[200px]">
           {tab === "passkey" && (
             <div className="space-y-3">
               <p className="text-[12.5px] text-zinc-600">
@@ -1204,33 +2120,62 @@ function AuthModal({
                   : "Use the passkey stored on this device or a hardware key to sign in instantly."}
               </p>
               <ul className="space-y-1.5 text-[12px] text-zinc-500">
-                <li className="flex gap-2"><Check className="size-4 text-emerald-500" /> Phishing-resistant</li>
-                <li className="flex gap-2"><Check className="size-4 text-emerald-500" /> Syncs across your Apple / Google devices</li>
-                <li className="flex gap-2"><Check className="size-4 text-emerald-500" /> Export your nsec anytime</li>
+                <li className="flex gap-2">
+                  <Check className="size-4 text-emerald-500" /> Phishing-resistant
+                </li>
+                <li className="flex gap-2">
+                  <Check className="size-4 text-emerald-500" /> Syncs across your Apple / Google
+                  devices
+                </li>
+                <li className="flex gap-2">
+                  <Check className="size-4 text-emerald-500" /> Export your nsec anytime
+                </li>
               </ul>
               <PrimaryBtn
                 className="w-full"
                 disabled={!!busy}
-                onClick={() => runWithSpinner("Waiting for passkey…", "passkey")}
+                onClick={() =>
+                  void run(
+                    "Waiting for passkey…",
+                    () => nostr.signInWithPasskey(mode).then(() => undefined),
+                    mode === "create" ? "Account created" : "Signed in with your passkey",
+                  )
+                }
               >
-                {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : (<><Fingerprint className="size-4" /> {mode === "create" ? "Create with passkey" : "Continue with passkey"}</>)}
+                {busy ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" /> {busy}
+                  </>
+                ) : (
+                  <>
+                    <Fingerprint className="size-4" />{" "}
+                    {mode === "create" ? "Create with passkey" : "Continue with passkey"}
+                  </>
+                )}
               </PrimaryBtn>
+              <p className="text-center text-[11px] text-zinc-400">
+                Works with iCloud Keychain, Google Password Manager and security keys.
+              </p>
             </div>
           )}
 
           {tab === "nostr" && (
             <div className="space-y-3">
               <div className="grid grid-cols-3 gap-1.5">
-                {([
-                  { id: "bunker", label: "Bunker" },
-                  { id: "nostr-connect", label: "Nostr Connect" },
-                  { id: "nwc", label: "NWC" },
-                ] as const).map((o) => (
+                {(
+                  [
+                    { id: "bunker", label: "Bunker" },
+                    { id: "nostr-connect", label: "Nostr Connect" },
+                    { id: "nip07", label: "Extension" },
+                  ] as const
+                ).map((o) => (
                   <button
                     key={o.id}
                     onClick={() => setNostrSub(o.id)}
                     className={`rounded-lg px-2 py-2 text-[11.5px] font-semibold ring-1 transition-colors ${
-                      nostrSub === o.id ? "bg-zinc-900 text-white ring-zinc-900" : "bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50"
+                      nostrSub === o.id
+                        ? "bg-zinc-900 text-white ring-zinc-900"
+                        : "bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50"
                     }`}
                   >
                     {o.label}
@@ -1239,32 +2184,94 @@ function AuthModal({
               </div>
               {nostrSub === "bunker" && (
                 <>
-                  <p className="text-[12.5px] text-zinc-600">Paste a <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">bunker://</code> URI from your remote signer.</p>
+                  <p className="text-[12.5px] text-zinc-600">
+                    Paste a{" "}
+                    <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">bunker://</code>{" "}
+                    URI from your remote signer (nsec.app, Amber, Nostrify…).
+                  </p>
                   <Field label="Bunker URI">
-                    <input value={bunker} onChange={(e) => setBunker(e.target.value)} placeholder="bunker://npub…?relay=wss://…" className={`${inputCls} font-mono text-[12px]`} />
+                    <input
+                      value={bunker}
+                      onChange={(e) => setBunker(e.target.value)}
+                      placeholder="bunker://npub…?relay=wss://…"
+                      className={`${inputCls} font-mono text-[12px]`}
+                    />
                   </Field>
-                  <PrimaryBtn className="w-full" disabled={!bunker || !!busy} onClick={() => runWithSpinner("Connecting to signer…", "bunker")}>
-                    {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : "Connect signer"}
+                  <PrimaryBtn
+                    className="w-full"
+                    disabled={!bunker.trim() || !!busy}
+                    onClick={() =>
+                      void run(
+                        "Connecting to signer…",
+                        () => nostr.signInWithBunker(bunker),
+                        "Connected to your signer",
+                      )
+                    }
+                  >
+                    {busy ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" /> {busy}
+                      </>
+                    ) : (
+                      "Connect signer"
+                    )}
                   </PrimaryBtn>
                 </>
               )}
               {nostrSub === "nostr-connect" && (
                 <>
-                  <p className="text-[12.5px] text-zinc-600">Scan this QR from Amber, Nostrify, Alby or any NIP-46 signer.</p>
-                  <div className="mx-auto grid size-40 place-items-center rounded-xl bg-white p-3 ring-1 ring-zinc-200"><FauxQR /></div>
-                  <PrimaryBtn className="w-full" disabled={!!busy} onClick={() => runWithSpinner("Waiting for signer approval…", "nostr-connect")}>
-                    {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : "I've scanned it"}
-                  </PrimaryBtn>
+                  <p className="text-[12.5px] text-zinc-600">
+                    Scan this with Amber, Nostrify, nsec.app or any NIP-46 signer.
+                  </p>
+                  <div className="mx-auto grid size-44 place-items-center rounded-xl bg-white p-3 ring-1 ring-zinc-200">
+                    {connectUri ? (
+                      <QRCodeSVG value={connectUri} size={152} level="M" />
+                    ) : (
+                      <Loader2 className="size-6 animate-spin text-zinc-400" />
+                    )}
+                  </div>
+                  {connectUri && (
+                    <button
+                      onClick={() => {
+                        void navigator.clipboard.writeText(connectUri);
+                        toast.success("Connection link copied");
+                      }}
+                      className="mx-auto flex items-center gap-1.5 text-[11.5px] font-semibold text-brand"
+                    >
+                      <Copy className="size-3.5" /> Copy connection link
+                    </button>
+                  )}
+                  <p className="text-center text-[11.5px] text-zinc-500">
+                    {waitingConnect
+                      ? "Waiting for your signer to approve…"
+                      : "Open the link in your signer app if the QR doesn't work."}
+                  </p>
                 </>
               )}
-              {nostrSub === "nwc" && (
+              {nostrSub === "nip07" && (
                 <>
-                  <p className="text-[12.5px] text-zinc-600">Connect a Nostr Wallet Connect string to sign & zap in one place.</p>
-                  <Field label="NWC connection">
-                    <input value={bunker} onChange={(e) => setBunker(e.target.value)} placeholder="nostr+walletconnect://…" className={`${inputCls} font-mono text-[12px]`} />
-                  </Field>
-                  <PrimaryBtn className="w-full" disabled={!bunker || !!busy} onClick={() => runWithSpinner("Pairing wallet…", "nwc")}>
-                    {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : "Pair wallet"}
+                  <p className="text-[12.5px] text-zinc-600">
+                    Use a browser extension like Alby or nos2x. Crays never touches your key — the
+                    extension signs each event.
+                  </p>
+                  <PrimaryBtn
+                    className="w-full"
+                    disabled={!!busy}
+                    onClick={() =>
+                      void run(
+                        "Talking to your extension…",
+                        () => nostr.signInWithNip07(),
+                        "Signed in with your extension",
+                      )
+                    }
+                  >
+                    {busy ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" /> {busy}
+                      </>
+                    ) : (
+                      "Connect extension"
+                    )}
                   </PrimaryBtn>
                 </>
               )}
@@ -1276,23 +2283,68 @@ function AuthModal({
               {mode === "create" ? (
                 <>
                   <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-amber-100">
-                    <p className="text-[12px] font-semibold text-amber-800">A fresh Nostr key will be generated for you.</p>
-                    <p className="mt-0.5 text-[11.5px] text-amber-700">You'll be prompted to back up your nsec after signing in. Lose it and you lose the account.</p>
+                    <p className="text-[12px] font-semibold text-amber-800">
+                      A fresh Nostr key will be generated on this device.
+                    </p>
+                    <p className="mt-0.5 text-[11.5px] text-amber-700">
+                      Back up your nsec after signing in. Lose it and you lose the account.
+                    </p>
                   </div>
-                  <PrimaryBtn className="w-full" disabled={!!busy} onClick={() => runWithSpinner("Generating keys…", "keys")}>
-                    {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : "Generate my keys"}
+                  <PrimaryBtn
+                    className="w-full"
+                    disabled={!!busy}
+                    onClick={() =>
+                      void run(
+                        "Generating keys…",
+                        async () => {
+                          await nostr.createLocalAccount();
+                        },
+                        "Account created",
+                      )
+                    }
+                  >
+                    {busy ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" /> {busy}
+                      </>
+                    ) : (
+                      "Generate my keys"
+                    )}
                   </PrimaryBtn>
                 </>
               ) : (
                 <>
-                  <Field label="Public key (npub) — optional">
-                    <input value={npub} onChange={(e) => setNpub(e.target.value)} placeholder="npub1…" className={`${inputCls} font-mono text-[12px]`} />
+                  <Field
+                    label="Private key (nsec)"
+                    hint="Stored encrypted in this browser only. Prefer a passkey or signer."
+                  >
+                    <input
+                      value={nsec}
+                      onChange={(e) => setNsec(e.target.value)}
+                      type="password"
+                      autoComplete="off"
+                      placeholder="nsec1…"
+                      className={`${inputCls} font-mono text-[12px]`}
+                    />
                   </Field>
-                  <Field label="Private key (nsec)" hint="Stored locally in your browser only. Prefer passkey or a signer.">
-                    <input value={nsec} onChange={(e) => setNsec(e.target.value)} type="password" placeholder="nsec1…" className={`${inputCls} font-mono text-[12px]`} />
-                  </Field>
-                  <PrimaryBtn className="w-full" disabled={!nsec || !!busy} onClick={() => runWithSpinner("Verifying key…", "keys")}>
-                    {busy ? <><Loader2 className="size-4 animate-spin" /> {busy}</> : "Sign in with nsec"}
+                  <PrimaryBtn
+                    className="w-full"
+                    disabled={!nsec.trim() || !!busy}
+                    onClick={() =>
+                      void run(
+                        "Verifying key…",
+                        () => nostr.signInWithNsec(nsec),
+                        "Signed in with your nsec",
+                      )
+                    }
+                  >
+                    {busy ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" /> {busy}
+                      </>
+                    ) : (
+                      "Sign in with nsec"
+                    )}
                   </PrimaryBtn>
                 </>
               )}
@@ -1307,16 +2359,6 @@ function AuthModal({
       </DialogContent>
     </Dialog>
   );
-}
-
-function labelFor(m: AuthMethod) {
-  return {
-    passkey: "Passkey",
-    bunker: "Bunker",
-    "nostr-connect": "Nostr Connect",
-    nwc: "Nostr Wallet Connect",
-    keys: "nsec",
-  }[m];
 }
 
 function TabCard({
@@ -1336,13 +2378,17 @@ function TabCard({
     <button
       onClick={onClick}
       className={`relative rounded-xl px-3 py-3 text-left transition-colors ${
-        active ? "bg-zinc-900 text-white ring-1 ring-zinc-900" : "bg-white text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-50"
+        active
+          ? "bg-zinc-900 text-white ring-1 ring-zinc-900"
+          : "bg-white text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-50"
       }`}
     >
       <Icon className={`size-4 ${active ? "text-white" : "text-zinc-500"}`} />
       <p className="mt-1.5 text-[12.5px] font-semibold">{title}</p>
       {badge && (
-        <span className={`absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${active ? "bg-white/15 text-white" : "bg-brand/10 text-brand"}`}>
+        <span
+          className={`absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${active ? "bg-white/15 text-white" : "bg-brand/10 text-brand"}`}
+        >
           {badge}
         </span>
       )}
@@ -1352,47 +2398,112 @@ function TabCard({
 
 // ---------- Import from Instagram (onboarding + sidebar) ----------
 function ImportInstagramModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const nostr = useNostr();
   const [step, setStep] = useState<"connect" | "select" | "done">("connect");
-  const [handle, setHandle] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [posts, setPosts] = useState<Array<{ id: number; caption: string; on: boolean }>>([]);
+  const [link, setLink] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [posts, setPosts] = useState<ImportedPost[]>([]);
+  const [exported, setExported] = useState<InstagramExport | null>(null);
+  const [error, setError] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (open) { setStep("connect"); setHandle(""); setBusy(false); setPosts([]); }
+    if (open) {
+      setStep("connect");
+      setLink("");
+      setBusy(null);
+      setPosts([]);
+      setExported(null);
+      setError("");
+    }
   }, [open]);
 
-  const connect = () => {
-    setBusy(true);
-    setTimeout(() => {
-      setPosts(
-        Array.from({ length: 8 }, (_, i) => ({
-          id: i,
-          caption: [
-            "Sunset over Lisbon",
-            "Studio setup 2026",
-            "New essay: The open creator economy",
-            "Behind the scenes",
-            "Chart of the day",
-            "Podcast with Elena Vega",
-            "Trip to Prague",
-            "Coffee & Bitcoin",
-          ][i],
-          on: true,
-        })),
-      );
-      setBusy(false);
+  const fetchLink = async () => {
+    setBusy("Fetching the post…");
+    setError("");
+    try {
+      const parsed = parseInstagramUrl(link);
+      if (!parsed) throw new Error("Paste a public Instagram post link, like instagram.com/p/…");
+      const post = await fetchInstagramPost({ data: { url: link } });
+      setPosts([{ ...post, id: post.shortcode, imageUrl: post.thumbnail, selected: true }]);
       setStep("select");
-    }, 900);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't load that post.");
+    } finally {
+      setBusy(null);
+    }
   };
 
-  const importSel = () => {
-    setBusy(true);
-    setTimeout(() => {
-      setBusy(false);
-      setStep("done");
-      toast.success(`${posts.filter((p) => p.on).length} posts imported to Nostr`);
-    }, 900);
+  const loadExport = async (file: File) => {
+    setBusy("Reading your export…");
+    setError("");
+    try {
+      const result = await readInstagramExportFile(file);
+      setExported(result);
+      setPosts(result.posts);
+      setStep("select");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't read that file.");
+    } finally {
+      setBusy(null);
+    }
   };
+
+  const importSelected = async () => {
+    const chosen = posts.filter((post) => post.selected !== false);
+    if (chosen.length === 0) return;
+    setBusy(`Importing 0/${chosen.length}…`);
+    setError("");
+    let imported = 0;
+    const failures: string[] = [];
+
+    for (const [index, post] of chosen.entries()) {
+      setBusy(`Importing ${index + 1}/${chosen.length}…`);
+      try {
+        let images: string[] = [];
+        if (post.imagePath && exported) {
+          const media = exported.readMedia(post.imagePath);
+          if (media) images = [await nostr.uploadMedia(media.bytes, media.mime)];
+        } else if (post.imageUrl) {
+          try {
+            const remote = await fetchRemoteImage({ data: { url: post.imageUrl } });
+            images = [await nostr.uploadMedia(base64ToBytes(remote.base64), remote.mime)];
+          } catch {
+            // Instagram may block the media fetch; publish the caption anyway.
+          }
+        }
+
+        const content = [
+          post.caption.trim(),
+          post.permalink ? `Originally posted on Instagram: ${post.permalink}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        if (!content.trim()) continue;
+
+        const tags: string[][] = [["t", "instagram-import"]];
+        if (post.permalink) tags.push(["r", post.permalink]);
+        await nostr.publish({ content, images, tags, createdAt: post.createdAt });
+        imported += 1;
+      } catch (err) {
+        failures.push(err instanceof Error ? err.message : "unknown error");
+      }
+    }
+
+    setBusy(null);
+    if (imported === 0) {
+      setError(failures[0] ?? "Nothing could be imported.");
+      return;
+    }
+    if (failures.length) {
+      toast.error(`${imported} imported, ${failures.length} failed.`);
+    } else {
+      toast.success(`${imported} posts imported to Nostr`);
+    }
+    setStep("done");
+  };
+
+  const selectedCount = posts.filter((post) => post.selected !== false).length;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -1403,28 +2514,76 @@ function ImportInstagramModal({ open, onClose }: { open: boolean; onClose: () =>
             Import from Instagram
           </DialogTitle>
           <DialogDescription>
-            Bring your existing audience & content into Nostr. This is a preview — no data is fetched yet.
+            Bring your posts over to Nostr. Captions are re-published as events signed by your key,
+            and images are re-hosted on Blossom.
           </DialogDescription>
         </DialogHeader>
 
         {step === "connect" && (
           <div className="space-y-3">
-            <Field label="Instagram handle" hint="We'll fetch your public posts. Private accounts can upload an export.">
-              <input value={handle} onChange={(e) => setHandle(e.target.value.replace(/^@/, ""))} placeholder="yourhandle" className={inputCls} />
+            <Field label="Link to a public post" hint="We fetch the caption and cover image.">
+              <input
+                value={link}
+                onChange={(e) => setLink(e.target.value)}
+                placeholder="https://www.instagram.com/p/…"
+                className={inputCls}
+              />
             </Field>
+            <GhostBtn
+              className="w-full"
+              disabled={!link.trim() || !!busy}
+              onClick={() => void fetchLink()}
+            >
+              {busy ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" /> {busy}
+                </>
+              ) : (
+                <>
+                  Fetch post <ArrowRight className="size-4" />
+                </>
+              )}
+            </GhostBtn>
+
+            <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-zinc-400">
+              <span className="h-px flex-1 bg-zinc-200" /> or{" "}
+              <span className="h-px flex-1 bg-zinc-200" />
+            </div>
+
             <div className="flex items-center justify-between rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-100">
               <div>
-                <p className="text-[12.5px] font-semibold text-zinc-800">Or upload IG data export</p>
-                <p className="text-[11px] text-zinc-500">Settings → Your activity → Download your information</p>
+                <p className="text-[12.5px] font-semibold text-zinc-800">
+                  Upload your Instagram export
+                </p>
+                <p className="text-[11px] text-zinc-500">
+                  Settings → Your activity → Download your information (JSON)
+                </p>
               </div>
-              <GhostBtn onClick={() => toast("Upload coming soon")}>Upload .zip</GhostBtn>
+              <GhostBtn disabled={!!busy} onClick={() => fileRef.current?.click()}>
+                {busy ? <Loader2 className="size-4 animate-spin" /> : "Upload .zip"}
+              </GhostBtn>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".zip,.json,application/zip,application/json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void loadExport(file);
+                }}
+              />
             </div>
-            <div className="flex gap-2">
-              <GhostBtn className="flex-1" onClick={onClose}>Skip for now</GhostBtn>
-              <PrimaryBtn className="flex-1" disabled={!handle || busy} onClick={connect}>
-                {busy ? <><Loader2 className="size-4 animate-spin" /> Connecting…</> : (<>Connect <ArrowRight className="size-4" /></>)}
-              </PrimaryBtn>
-            </div>
+
+            {error && (
+              <p className="rounded-lg bg-rose-50 p-2.5 text-[11.5px] text-rose-700 ring-1 ring-rose-100">
+                {error}
+              </p>
+            )}
+
+            <GhostBtn className="w-full" onClick={onClose}>
+              Skip for now
+            </GhostBtn>
           </div>
         )}
 
@@ -1433,36 +2592,75 @@ function ImportInstagramModal({ open, onClose }: { open: boolean; onClose: () =>
             <div className="flex items-center justify-between">
               <p className="text-[12.5px] font-semibold text-zinc-800">Select posts to import</p>
               <div className="flex gap-2 text-[11.5px] font-semibold text-brand">
-                <button onClick={() => setPosts((p) => p.map((x) => ({ ...x, on: true })))}>All</button>
+                <button onClick={() => setPosts((p) => p.map((x) => ({ ...x, selected: true })))}>
+                  All
+                </button>
                 <span className="text-zinc-300">·</span>
-                <button onClick={() => setPosts((p) => p.map((x) => ({ ...x, on: false })))}>None</button>
+                <button onClick={() => setPosts((p) => p.map((x) => ({ ...x, selected: false })))}>
+                  None
+                </button>
               </div>
             </div>
-            <ul className="max-h-[280px] space-y-1.5 overflow-auto pr-1">
-              {posts.map((p) => (
-                <li key={p.id}>
-                  <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-white p-2.5 ring-1 ring-zinc-100 hover:bg-zinc-50">
-                    <input
-                      type="checkbox"
-                      checked={p.on}
-                      onChange={(e) => setPosts((all) => all.map((x) => x.id === p.id ? { ...x, on: e.target.checked } : x))}
-                      className="size-4 accent-brand"
-                    />
-                    <div className="size-10 shrink-0 rounded-lg bg-gradient-to-br from-fuchsia-400 via-orange-300 to-amber-300" />
-                    <p className="flex-1 truncate text-[12.5px] text-zinc-800">{p.caption}</p>
-                    <span className="text-[10.5px] text-zinc-400">IG</span>
-                  </label>
-                </li>
-              ))}
+            <ul className="max-h-[300px] space-y-1.5 overflow-auto pr-1">
+              {posts.map((post) => {
+                const on = post.selected !== false;
+                const preview = post.imageUrl;
+                return (
+                  <li key={post.id}>
+                    <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-white p-2.5 ring-1 ring-zinc-100 hover:bg-zinc-50">
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={(e) =>
+                          setPosts((all) =>
+                            all.map((x) =>
+                              x.id === post.id ? { ...x, selected: e.target.checked } : x,
+                            ),
+                          )
+                        }
+                        className="size-4 accent-brand"
+                      />
+                      {preview ? (
+                        <img
+                          src={preview}
+                          alt=""
+                          className="size-10 shrink-0 rounded-lg object-cover"
+                        />
+                      ) : (
+                        <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-fuchsia-400 via-orange-300 to-amber-300 text-white">
+                          <Camera className="size-4" />
+                        </div>
+                      )}
+                      <p className="flex-1 truncate text-[12.5px] text-zinc-800">
+                        {post.caption || "Untitled post"}
+                      </p>
+                      <span className="text-[10.5px] text-zinc-400">IG</span>
+                    </label>
+                  </li>
+                );
+              })}
             </ul>
             <div className="flex items-center gap-2 rounded-lg bg-blue-50 p-2.5 text-[11.5px] text-blue-800 ring-1 ring-blue-100">
               <ShieldCheck className="size-3.5" />
               Original captions & media are re-published as Nostr events signed by your key.
             </div>
+            {error && <p className="text-[11.5px] text-rose-600">{error}</p>}
             <div className="flex gap-2">
-              <GhostBtn className="flex-1" onClick={() => setStep("connect")}>Back</GhostBtn>
-              <PrimaryBtn className="flex-1" disabled={busy || !posts.some((p) => p.on)} onClick={importSel}>
-                {busy ? <><Loader2 className="size-4 animate-spin" /> Importing…</> : `Import ${posts.filter((p) => p.on).length}`}
+              <GhostBtn className="flex-1" disabled={!!busy} onClick={() => setStep("connect")}>
+                Back
+              </GhostBtn>
+              <PrimaryBtn
+                className="flex-1"
+                disabled={!!busy || selectedCount === 0}
+                onClick={() => void importSelected()}
+              >
+                {busy ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" /> {busy}
+                  </>
+                ) : (
+                  `Import ${selectedCount}`
+                )}
               </PrimaryBtn>
             </div>
           </div>
@@ -1475,9 +2673,12 @@ function ImportInstagramModal({ open, onClose }: { open: boolean; onClose: () =>
             </div>
             <p className="text-[14px] font-semibold text-zinc-900">All set</p>
             <p className="text-[12.5px] text-zinc-500">
-              Your posts have been published to your relays. Followers can now discover them on Nostr.
+              Your posts have been published to your relays. Followers can now discover them on
+              Nostr.
             </p>
-            <PrimaryBtn className="w-full" onClick={onClose}>Done</PrimaryBtn>
+            <PrimaryBtn className="w-full" onClick={onClose}>
+              Done
+            </PrimaryBtn>
           </div>
         )}
       </DialogContent>
@@ -1486,5 +2687,9 @@ function ImportInstagramModal({ open, onClose }: { open: boolean; onClose: () =>
 }
 
 // suppress unused
-void Sparkles; void FileText; void Mic; void Plus; void Share2; void X;
-
+void Sparkles;
+void FileText;
+void Mic;
+void Plus;
+void Share2;
+void X;

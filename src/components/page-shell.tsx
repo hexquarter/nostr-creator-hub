@@ -31,11 +31,13 @@ export function PageShell({ title, subtitle, actions, rightSidebar, children }: 
           {actions && <div className="flex items-center gap-2 lg:hidden">{actions}</div>}
           {children}
         </main>
-        {rightSidebar === false ? <div className="hidden xl:block" /> : rightSidebar ?? <RightSidebar />}
+        {rightSidebar === false ? (
+          <div className="hidden xl:block" />
+        ) : (
+          (rightSidebar ?? <RightSidebar />)
+        )}
       </div>
       <MobileNav />
     </div>
   );
 }
-
-
