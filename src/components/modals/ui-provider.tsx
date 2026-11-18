@@ -41,11 +41,9 @@ import {
   CREATOR_PASS_DAYS,
   CREATOR_PASS_USD,
   activateCreatorPass,
-  cardOnramps,
   creatorPassDaysLeft,
   isCreatorPassActive,
   useCreatorPass,
-  type CardOnramp,
 } from "@/lib/nostr/creator-pass";
 import { hasPasskey, hasWebAuthn } from "@/lib/nostr/passkey";
 import { useBtcPrice, satsToUsd, usdToSats, formatUsd } from "@/lib/nostr/price";
@@ -91,7 +89,6 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   CreditCard,
-  Coins,
   Crown,
   Sparkles,
   Image as ImageIcon,
@@ -1414,8 +1411,6 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
   const [loading, setLoading] = useState(false);
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState("");
-  const [method, setMethod] = useState<"lightning" | "card">("lightning");
-  const [stablecoin, setStablecoin] = useState<CardOnramp | null>(null);
   const liveSatsRef = useRef(liveSats);
   liveSatsRef.current = liveSats;
 
@@ -1451,7 +1446,6 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
       setLoading(false);
       setPaying(false);
       setError("");
-      setStablecoin(null);
       return;
     }
     if (active) return;
@@ -1515,14 +1509,6 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
     }
   };
 
-  const onramps = cardOnramps(CREATOR_PASS_USD);
-
-  const activateStablecoin = () => {
-    activateCreatorPass(quote);
-    toast.success("Thanks — Crays premium is active");
-    onClose();
-  };
-
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="grid max-h-[92dvh] grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden sm:max-w-[460px]">
@@ -1582,221 +1568,75 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
                   </p>
                 </div>
               ) : (
-                <>
-                  <div className="grid grid-cols-2 gap-1 rounded-xl bg-zinc-100 p-1">
-                    {(
-                      [
-                        ["lightning", "Lightning"],
-                        ["card", "Card"],
-                      ] as const
-                    ).map(([value, label]) => (
-                      <button
-                        key={value}
-                        onClick={() => {
-                          setMethod(value);
-                          setStablecoin(null);
-                        }}
-                        className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors ${
-                          method === value
-                            ? "bg-white text-zinc-900 shadow-sm"
-                            : "text-zinc-500 hover:text-zinc-800"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
+                <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
+                  <p className="text-[12px] font-semibold text-zinc-900">
+                    {invoice ? `Scan to pay ${quote.toLocaleString()} sats` : "Lightning checkout"}
+                  </p>
+                  <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm">
+                    {loading ? (
+                      <Loader2 className="size-6 animate-spin text-zinc-300" />
+                    ) : invoice ? (
+                      <QRCodeSVG value={invoice.toUpperCase()} size={136} level="M" />
+                    ) : (
+                      <span className="px-2 text-[11px] leading-relaxed text-zinc-400">
+                        {error ? "We couldn’t create an invoice." : "Preparing your invoice…"}
+                      </span>
+                    )}
                   </div>
-
-                  {method === "lightning" ? (
-                    <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
-                      <p className="text-[12px] font-semibold text-zinc-900">
-                        {invoice
-                          ? `Scan to pay ${quote.toLocaleString()} sats`
-                          : "Lightning checkout"}
+                  {invoice ? (
+                    <>
+                      <p className="mt-2 text-[12px] font-semibold text-zinc-900">
+                        {formatUsd(CREATOR_PASS_USD)} · {quote.toLocaleString()} sats
                       </p>
-                      <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm">
-                        {loading ? (
-                          <Loader2 className="size-6 animate-spin text-zinc-300" />
-                        ) : invoice ? (
-                          <QRCodeSVG value={invoice.toUpperCase()} size={136} level="M" />
-                        ) : (
-                          <span className="px-2 text-[11px] leading-relaxed text-zinc-400">
-                            {error ? "We couldn’t create an invoice." : "Preparing your invoice…"}
-                          </span>
-                        )}
+                      <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
+                        <a href={`lightning:${invoice}`} className="text-brand hover:underline">
+                          Open wallet
+                        </a>
+                        <button
+                          onClick={() => {
+                            void navigator.clipboard.writeText(invoice);
+                            toast.success("Invoice copied");
+                          }}
+                          className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
+                        >
+                          <Copy className="size-3" /> Copy invoice
+                        </button>
+                        <button
+                          onClick={() => void loadInvoice()}
+                          className="text-zinc-600 hover:underline"
+                        >
+                          New invoice
+                        </button>
                       </div>
-                      {invoice ? (
-                        <>
-                          <p className="mt-2 text-[12px] font-semibold text-zinc-900">
-                            {formatUsd(CREATOR_PASS_USD)} · {quote.toLocaleString()} sats
-                          </p>
-                          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
-                            <a href={`lightning:${invoice}`} className="text-brand hover:underline">
-                              Open wallet
-                            </a>
-                            <button
-                              onClick={() => {
-                                void navigator.clipboard.writeText(invoice);
-                                toast.success("Invoice copied");
-                              }}
-                              className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
-                            >
-                              <Copy className="size-3" /> Copy invoice
-                            </button>
-                            <button
-                              onClick={() => void loadInvoice()}
-                              className="text-zinc-600 hover:underline"
-                            >
-                              New invoice
-                            </button>
-                          </div>
-                          <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
-                            {verifyUrl
-                              ? "Crays premium turns on by itself the moment the payment settles."
-                              : "This wallet doesn’t report payments automatically — connect a wallet to pay in one tap."}
-                          </p>
-                          {verifyUrl && (
-                            <p className="mt-1 inline-flex items-center gap-1.5 text-[10.5px] font-semibold text-amber-700">
-                              <Loader2 className="size-3 animate-spin" /> Waiting for payment…
-                            </p>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          <p className="mx-auto mt-2 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
-                            {error
-                              ? "Checkout is unavailable right now. Try again in a moment."
-                              : "Creating a Lightning invoice…"}
-                          </p>
-                          {!loading && (
-                            <button
-                              onClick={() => void loadInvoice()}
-                              className="mt-2 text-[11.5px] font-semibold text-brand hover:underline"
-                            >
-                              Try again
-                            </button>
-                          )}
-                        </>
+                      <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
+                        {verifyUrl
+                          ? "Crays premium turns on by itself the moment the payment settles."
+                          : "This wallet doesn’t report payments automatically — connect a wallet to pay in one tap."}
+                      </p>
+                      {verifyUrl && (
+                        <p className="mt-1 inline-flex items-center gap-1.5 text-[10.5px] font-semibold text-amber-700">
+                          <Loader2 className="size-3 animate-spin" /> Waiting for payment…
+                        </p>
                       )}
-                    </div>
+                    </>
                   ) : (
-                    <div className="rounded-xl bg-white p-3.5 ring-1 ring-zinc-100">
-                      {stablecoin?.address ? (
-                        <>
-                          <button
-                            onClick={() => setStablecoin(null)}
-                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-zinc-500 hover:text-zinc-800"
-                          >
-                            <ChevronLeft className="size-3.5" /> All payment options
-                          </button>
-                          <p className="mt-2 text-center text-[12px] font-semibold text-zinc-900">
-                            Send {CREATOR_PASS_USD} {stablecoin.id.toUpperCase()} on{" "}
-                            {stablecoin.network}
-                          </p>
-                          <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm ring-1 ring-zinc-100">
-                            <QRCodeSVG
-                              value={stablecoin.uri || stablecoin.address}
-                              size={136}
-                              level="M"
-                            />
-                          </div>
-                          <p className="mt-2 break-all rounded-lg bg-zinc-50 px-2.5 py-2 text-center font-mono text-[10.5px] leading-relaxed text-zinc-600 ring-1 ring-zinc-100">
-                            {stablecoin.address}
-                          </p>
-                          <button
-                            onClick={() => {
-                              void navigator.clipboard.writeText(stablecoin.address ?? "");
-                              toast.success("Address copied");
-                            }}
-                            className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-zinc-100 px-3 py-2 text-[11.5px] font-semibold text-zinc-700 hover:bg-zinc-200"
-                          >
-                            <Copy className="size-3.5" /> Copy address
-                          </button>
-                          <p className="mt-2 text-[10px] leading-relaxed text-zinc-400">
-                            {stablecoin.uri && stablecoin.uri !== stablecoin.address
-                              ? `Scan with a ${stablecoin.network} wallet to prefill the token and amount, or send ${stablecoin.id.toUpperCase()} manually. `
-                              : ""}
-                            Only send {stablecoin.id.toUpperCase()} on {stablecoin.network} to this
-                            address. Stablecoin transfers aren’t verified automatically yet.
-                          </p>
-                          <PrimaryBtn
-                            className="mt-2 w-full !bg-amber-500 hover:!bg-amber-600"
-                            onClick={activateStablecoin}
-                          >
-                            <Check className="size-4" /> I’ve sent it — activate
-                          </PrimaryBtn>
-                        </>
-                      ) : (
-                        <>
-                          <div className="flex items-baseline justify-between gap-2">
-                            <p className="text-[12px] font-semibold text-zinc-900">
-                              Pay {formatUsd(CREATOR_PASS_USD)}
-                            </p>
-                            <p className="text-[10.5px] text-zinc-400">
-                              ≈ {quote.toLocaleString()} sats
-                            </p>
-                          </div>
-                          <p className="mt-0.5 text-[10.5px] leading-relaxed text-zinc-500">
-                            Buy Bitcoin with a card, or send USDC/USDT. Lightning activates
-                            automatically; stablecoin transfers are confirmed manually.
-                          </p>
-                          <ul className="mt-2.5 space-y-1.5">
-                            {onramps.map((onramp) => {
-                              const Icon = onramp.id === "moonpay" ? CreditCard : Coins;
-                              const body = (
-                                <>
-                                  <span className="grid size-7 shrink-0 place-items-center rounded-md bg-zinc-100 text-zinc-500">
-                                    <Icon className="size-3.5" />
-                                  </span>
-                                  <span className="min-w-0 flex-1">
-                                    <span className="block text-[12px] font-semibold text-zinc-800">
-                                      {onramp.label}
-                                    </span>
-                                    <span className="block text-[10.5px] leading-snug text-zinc-500">
-                                      {onramp.description}
-                                    </span>
-                                  </span>
-                                  {onramp.href && (
-                                    <ArrowUpRight className="size-3.5 shrink-0 text-zinc-300" />
-                                  )}
-                                </>
-                              );
-                              return (
-                                <li key={onramp.id}>
-                                  {onramp.href ? (
-                                    <a
-                                      href={onramp.href}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 ring-1 ring-zinc-100 transition-colors hover:bg-zinc-50 hover:ring-amber-200"
-                                    >
-                                      {body}
-                                    </a>
-                                  ) : onramp.address ? (
-                                    <button
-                                      onClick={() => setStablecoin(onramp)}
-                                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left ring-1 ring-zinc-100 transition-colors hover:bg-zinc-50 hover:ring-amber-200"
-                                    >
-                                      {body}
-                                    </button>
-                                  ) : (
-                                    <div className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 opacity-60 ring-1 ring-zinc-100">
-                                      {body}
-                                    </div>
-                                  )}
-                                </li>
-                              );
-                            })}
-                          </ul>
-                          <p className="mt-2 text-[10px] leading-relaxed text-zinc-400">
-                            MoonPay opens in a new tab. Apple Pay needs Safari; Google Pay needs
-                            Chrome.
-                          </p>
-                        </>
+                    <>
+                      <p className="mx-auto mt-2 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
+                        {error
+                          ? "Checkout is unavailable right now. Try again in a moment."
+                          : "Creating a Lightning invoice…"}
+                      </p>
+                      {!loading && (
+                        <button
+                          onClick={() => void loadInvoice()}
+                          className="mt-2 text-[11.5px] font-semibold text-brand hover:underline"
+                        >
+                          Try again
+                        </button>
                       )}
-                    </div>
+                    </>
                   )}
-                </>
+                </div>
               )}
             </>
           )}
@@ -1828,7 +1668,7 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
               >
                 Write a post
               </PrimaryBtn>
-            ) : method === "lightning" && nostr.wallet.connected && invoice ? (
+            ) : nostr.wallet.connected && invoice ? (
               <PrimaryBtn
                 className="!bg-amber-500 hover:!bg-amber-600"
                 disabled={paying}

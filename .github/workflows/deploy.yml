@@ -54,15 +54,6 @@ jobs:
           # Set these as repository variables (Settings → Secrets and variables →
           # Actions → Variables). Empty values keep the placeholder checkout.
           VITE_CRAYS_LIGHTNING_ADDRESS: ${{ vars.CRAYS_LIGHTNING_ADDRESS }}
-          VITE_CRAYS_MOONPAY_URL: ${{ vars.CRAYS_MOONPAY_URL }}
-          VITE_CRAYS_USDC_ADDRESS: ${{ vars.CRAYS_USDC_ADDRESS }}
-          VITE_CRAYS_USDC_NETWORK: ${{ vars.CRAYS_USDC_NETWORK }}
-          VITE_CRAYS_USDC_TOKEN: ${{ vars.CRAYS_USDC_TOKEN }}
-          VITE_CRAYS_USDC_CHAIN_ID: ${{ vars.CRAYS_USDC_CHAIN_ID }}
-          VITE_CRAYS_USDT_ADDRESS: ${{ vars.CRAYS_USDT_ADDRESS }}
-          VITE_CRAYS_USDT_NETWORK: ${{ vars.CRAYS_USDT_NETWORK }}
-          VITE_CRAYS_USDT_TOKEN: ${{ vars.CRAYS_USDT_TOKEN }}
-          VITE_CRAYS_USDT_CHAIN_ID: ${{ vars.CRAYS_USDT_CHAIN_ID }}
         run: yarn build
 
       - name: Configure Pages
