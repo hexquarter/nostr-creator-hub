@@ -15,6 +15,7 @@ import {
   useCreatorPass,
 } from "@/lib/nostr/creator-pass";
 import { compactNumber } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import {
   Zap,
   Users,
@@ -26,6 +27,8 @@ import {
   Crown,
   Wallet,
   Loader2,
+  Check,
+  ArrowRight,
 } from "lucide-react";
 
 export const Route = createFileRoute("/premium")({
@@ -35,7 +38,7 @@ export const Route = createFileRoute("/premium")({
       {
         name: "description",
         content:
-          "The Crays creator toolkit: passkey identity, long-form publishing, Lightning zaps, Instagram import and encrypted messages on Nostr.",
+          "Crays Premium: sell memberships, publish members-only posts and get paid in sats over Lightning. Free while in beta.",
       },
     ],
   }),
@@ -46,7 +49,7 @@ const features = [
   {
     icon: KeyRound,
     title: "Passkey identity",
-    desc: "Create a Nostr key protected by your device's passkey — no seed phrase to lose.",
+    desc: "A Nostr key protected by your device's passkey — no seed phrase to lose.",
   },
   {
     icon: FileText,
@@ -75,6 +78,14 @@ const features = [
   },
 ];
 
+const premiumBenefits = [
+  "Sell memberships — one badge price for all your members-only posts",
+  "Publish members-only notes and long-form articles",
+  "Readers pay you directly over Lightning — 0% platform fee",
+  "Members, members-only posts and zaps in one dashboard",
+  "Passkey sign-in, encrypted DMs and Instagram import included",
+];
+
 function Premium() {
   const nostr = useNostr();
 
@@ -85,24 +96,31 @@ function Premium() {
     >
       <CreatorToolsHero />
 
-      <section className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">
+      <section className="grid items-start gap-5 lg:grid-cols-[1.05fr_1fr]">
+        <PremiumBadgeCard className="lg:row-span-2" />
         <CreatorDashboard />
 
-        {/* Feature grid */}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {features.map((f) => (
-            <div
-              key={f.title}
-              className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 transition-shadow hover:shadow-elevated"
-            >
-              <div className="grid size-9 place-items-center rounded-xl bg-brand/10 text-brand">
-                <f.icon className="size-[18px]" strokeWidth={2.2} />
+        <section>
+          <h3 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+            Everything else, included
+          </h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {features.map((f) => (
+              <div
+                key={f.title}
+                className="flex items-start gap-3 rounded-xl bg-white p-4 shadow-card ring-1 ring-black/5"
+              >
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand">
+                  <f.icon className="size-4" strokeWidth={2.2} />
+                </span>
+                <div className="min-w-0">
+                  <h4 className="text-[12.5px] font-semibold text-zinc-900">{f.title}</h4>
+                  <p className="mt-0.5 text-[11.5px] leading-relaxed text-zinc-500">{f.desc}</p>
+                </div>
               </div>
-              <h4 className="mt-3 text-[13.5px] font-semibold text-zinc-900">{f.title}</h4>
-              <p className="mt-1 text-[12px] leading-relaxed text-zinc-500">{f.desc}</p>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </section>
       </section>
 
       <p className="flex items-center justify-center gap-1.5 text-center text-[11.5px] text-zinc-400">
@@ -112,6 +130,124 @@ function Premium() {
           : "Powered by Nostr + Lightning"}
       </p>
     </PageShell>
+  );
+}
+
+/**
+ * The Crays premium badge is the platform entitlement that makes a creator
+ * able to sell memberships. Until it is active this card is the main thing on
+ * the page: what the badge unlocks, the price (free in beta) and one button.
+ */
+function PremiumBadgeCard({ className }: { className?: string }) {
+  const ui = useUI();
+  const nostr = useNostr();
+  const pass = useCreatorPass();
+  const active = isCreatorPassActive(pass);
+  const daysLeft = pass ? creatorPassDaysLeft(pass) : CREATOR_PASS_DAYS;
+
+  const activate = () => {
+    activateCreatorPass();
+    toast.success("Crays premium badge active — members-only posts unlocked");
+  };
+
+  return (
+    <section
+      className={cn(
+        "overflow-hidden rounded-2xl bg-white shadow-card ring-1 ring-black/5",
+        className,
+      )}
+    >
+      <div className="relative overflow-hidden bg-gradient-to-br from-zinc-900 via-zinc-900 to-amber-950 px-5 pb-5 pt-4 text-white sm:px-6 sm:pb-6">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-12 -top-16 size-48 rounded-full bg-amber-500/25 blur-3xl"
+        />
+        <div className="relative flex items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-200 ring-1 ring-white/15">
+            <Crown className="size-3" /> Crays premium
+          </span>
+          {active ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-400/30">
+              <Check className="size-3" /> Active
+            </span>
+          ) : (
+            <span className="text-[10.5px] font-semibold text-white/50">Beta</span>
+          )}
+        </div>
+
+        <h3 className="relative mt-4 text-balance text-[21px] font-semibold leading-tight tracking-tight">
+          {active
+            ? "Your badge is live — go sell a membership."
+            : "Get paid by your audience, not a platform."}
+        </h3>
+        <p className="relative mt-1.5 max-w-sm text-[12.5px] leading-relaxed text-zinc-300">
+          {active
+            ? `Anyone who buys your badge unlocks every members-only post you publish. Free while Crays is in beta.`
+            : "One badge unlocks every members-only post you publish. Readers pay you directly in sats — Crays never takes a cut."}
+        </p>
+
+        <div className="relative mt-4 flex flex-wrap items-end gap-x-2 gap-y-1">
+          <span className="text-[26px] font-bold leading-none tracking-tight">
+            {active ? `${daysLeft} days` : "Free"}
+          </span>
+          <span className="pb-0.5 text-[11px] text-zinc-400">
+            {active ? "left on your badge" : `while Crays is in beta · ${CREATOR_PASS_DAYS} days`}
+          </span>
+        </div>
+      </div>
+
+      <div className="px-5 py-5 sm:px-6">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+          {active ? "Included in your badge" : "What the badge unlocks"}
+        </p>
+        <ul className="mt-3 space-y-2">
+          {premiumBenefits.map((benefit) => (
+            <li key={benefit} className="flex items-start gap-2 text-[12.5px] text-zinc-700">
+              <Check
+                className={`mt-0.5 size-3.5 shrink-0 ${active ? "text-emerald-500" : "text-amber-500"}`}
+              />
+              <span className="leading-relaxed">{benefit}</span>
+            </li>
+          ))}
+        </ul>
+
+        <div className="mt-5 flex flex-col gap-2">
+          {active ? (
+            <>
+              <button
+                onClick={() => ui.openCompose({ mode: "post" })}
+                className="w-full rounded-xl bg-zinc-900 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-black"
+              >
+                Write a members-only post
+              </button>
+              <Link
+                to="/profile"
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl py-2 text-[12px] font-semibold text-zinc-500 transition-colors hover:text-zinc-900"
+              >
+                See your members <ArrowRight className="size-3.5" />
+              </Link>
+            </>
+          ) : nostr.account ? (
+            <button
+              onClick={activate}
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-amber-500 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-amber-600"
+            >
+              <Crown className="size-4" /> Activate premium badge — free
+            </button>
+          ) : (
+            <button
+              onClick={() => ui.openAuth({ intent: "activate your Crays premium badge" })}
+              className="w-full rounded-xl bg-amber-500 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-amber-600"
+            >
+              Create your account
+            </button>
+          )}
+          <p className="text-center text-[10.5px] text-zinc-400">
+            No card · no auto-renew · your keys stay on your device
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -186,9 +322,9 @@ function CreatorDashboard() {
         </p>
         <button
           onClick={() => ui.openAuth({ intent: "open your creator dashboard" })}
-          className="mt-5 w-full rounded-xl bg-zinc-900 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-black"
+          className="mt-5 w-full rounded-xl bg-zinc-100 py-3 text-[13px] font-semibold text-zinc-700 transition-colors hover:bg-zinc-200"
         >
-          Create your account
+          Sign in
         </button>
         <p className="mt-2 text-center text-[11px] text-zinc-400">Free while in beta · no card</p>
       </section>
