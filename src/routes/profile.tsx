@@ -246,19 +246,19 @@ function Profile() {
           }
         />
         <div className="-mt-14 px-5 pb-6 sm:px-8">
-          <div className="flex items-end justify-between gap-4">
-            <div className="rounded-2xl bg-white p-1.5 shadow-card">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="w-fit rounded-2xl bg-white p-1.5 shadow-card">
               {profile?.picture ? (
                 <img src={profile.picture} alt="" className="size-24 rounded-xl object-cover" />
               ) : (
                 <AvatarTile seed={name} size={96} rounded="2xl" className="!rounded-xl" />
               )}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
               {badgePrice != null && !isOwn && (
                 <button
                   onClick={() => ui.openBadge({ creator: pubkey, name, sats: badgePrice })}
-                  className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12px] font-semibold transition-colors ${
+                  className={`col-span-2 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-2 text-[12px] font-semibold transition-colors sm:col-auto ${
                     ownedBadge
                       ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
                       : "bg-amber-500 text-white shadow-card hover:bg-amber-600"
@@ -267,32 +267,31 @@ function Profile() {
                   <Crown className="size-3.5" />
                   {ownedBadge
                     ? `Badge · ${daysLeft(ownedBadge)}d left`
-                    : `Creator badge · ${compactNumber(badgePrice)} sats`}
+                    : `Badge · ${compactNumber(badgePrice)} sats`}
                 </button>
               )}
               {isOwn && badgePrice != null && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 ring-1 ring-amber-100">
-                  <Crown className="size-3.5" /> Badge · {compactNumber(badgePrice)} sats /{" "}
-                  {BADGE_DAYS}d
+                <span className="col-span-2 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 ring-1 ring-amber-100 sm:col-auto">
+                  <Crown className="size-3.5" /> Badge · {compactNumber(badgePrice)} sats
                 </span>
               )}
               <button
                 onClick={() => ui.openZap({ recipient: name, pubkey })}
-                className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 hover:bg-amber-100"
+                className="inline-flex items-center justify-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 hover:bg-amber-100"
               >
                 <Zap className="size-3.5" /> Zap
               </button>
               {isOwn ? (
                 <button
                   onClick={ui.openEditProfile}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-[12px] font-semibold text-zinc-700 shadow-card ring-1 ring-black/5 hover:bg-zinc-50"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-[12px] font-semibold text-zinc-700 shadow-card ring-1 ring-black/5 hover:bg-zinc-50"
                 >
                   <SettingsIcon className="size-3.5" /> Edit profile
                 </button>
               ) : (
                 <button
                   onClick={() => void toggleFollow()}
-                  className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12px] font-semibold shadow-card ring-1 transition-colors ${
+                  className={`inline-flex items-center justify-center gap-1.5 rounded-full px-3.5 py-2 text-[12px] font-semibold shadow-card ring-1 transition-colors ${
                     following
                       ? "bg-zinc-100 text-zinc-700 ring-black/5 hover:bg-zinc-200"
                       : "bg-zinc-900 text-white ring-zinc-900 hover:bg-zinc-700"
@@ -309,20 +308,22 @@ function Profile() {
             </div>
           </div>
 
-          <div className="mt-5">
-            <h2 className="flex flex-wrap items-center gap-2 text-[22px] font-semibold tracking-tight text-zinc-900">
+          <div className="mt-5 min-w-0">
+            <h2 className="flex flex-wrap items-center gap-2 break-words text-[22px] font-semibold tracking-tight text-zinc-900">
               {name}
-              {profile?.nip05 && <BadgeCheck className="size-5 fill-brand text-white" />}
+              {profile?.nip05 && <BadgeCheck className="size-5 shrink-0 fill-brand text-white" />}
             </h2>
             <button
               onClick={() => {
                 void navigator.clipboard.writeText(npub);
                 toast.success("npub copied");
               }}
-              className="inline-flex items-center gap-1 text-[12px] text-zinc-500 hover:text-zinc-800"
+              className="inline-flex max-w-full items-center gap-1 text-[12px] text-zinc-500 hover:text-zinc-800"
             >
-              {npub.slice(0, 18)}…{npub.slice(-6)}
-              <Copy className="size-3" />
+              <span className="truncate">
+                {npub.slice(0, 18)}…{npub.slice(-6)}
+              </span>
+              <Copy className="size-3 shrink-0" />
             </button>
             {profile?.about && (
               <p className="mt-3 max-w-xl whitespace-pre-wrap text-pretty text-[14px] leading-relaxed text-zinc-700">
@@ -382,7 +383,7 @@ function Profile() {
 
       {showMembership && (
         <section className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h3 className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
                 <Crown className="size-3.5" /> Creator membership
@@ -402,20 +403,20 @@ function Profile() {
             {!isOwn && hasBadgeProgram && !ownedBadge && (
               <button
                 onClick={() => ui.openBadge({ creator: pubkey, name, sats: badgePrice })}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
+                className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600 sm:w-auto"
               >
                 <Crown className="size-4" /> Get badge · {compactNumber(badgePrice)} sats
               </button>
             )}
             {!isOwn && ownedBadge && (
-              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-4 py-2.5 text-[12.5px] font-semibold text-emerald-700 ring-1 ring-emerald-100">
+              <span className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-emerald-50 px-4 py-2.5 text-[12.5px] font-semibold text-emerald-700 ring-1 ring-emerald-100 sm:w-auto">
                 <Check className="size-4" /> Member · {daysLeft(ownedBadge)} days left
               </span>
             )}
             {isOwn && hasBadgeProgram && (
               <button
                 onClick={() => ui.openCompose({ mode: "post" })}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
+                className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600 sm:w-auto"
               >
                 <Crown className="size-4" /> Write members-only post
               </button>
@@ -429,7 +430,7 @@ function Profile() {
                   }
                   ui.openCompose({ mode: "post" });
                 }}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
+                className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600 sm:w-auto"
               >
                 {hasCreatorPass ? <Crown className="size-4" /> : <Lock className="size-4" />}
                 {hasCreatorPass ? "Start your badge program" : "Get Crays badge"}

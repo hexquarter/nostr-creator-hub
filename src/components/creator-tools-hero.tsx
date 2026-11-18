@@ -21,8 +21,10 @@ export function CreatorToolsHero({ compact = false }: { compact?: boolean }) {
             "radial-gradient(at 20% 10%, oklch(0.7 0.2 50 / 0.45) 0, transparent 50%), radial-gradient(at 90% 100%, oklch(0.55 0.22 260 / 0.4) 0, transparent 50%)",
         }}
       />
-      <div className="relative grid gap-8 sm:grid-cols-[1.4fr_1fr] sm:items-end">
-        <div>
+      <div
+        className={`relative grid gap-8 ${compact ? "" : "lg:grid-cols-[1.4fr_1fr] lg:items-end"}`}
+      >
+        <div className="min-w-0">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider backdrop-blur-sm">
             <Crown className="size-3 text-amber-300" /> Creator toolkit
           </span>
@@ -67,21 +69,21 @@ export function CreatorToolsHero({ compact = false }: { compact?: boolean }) {
             )}
           </div>
         </div>
+        {!compact && (
+          <dl className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
+            <Metric
+              icon={Zap}
+              label="Lightning address"
+              value={signedIn ? (lud16 ?? "Not set") : "Set after sign-up"}
+            />
+            <Metric
+              icon={Users}
+              label="Followers"
+              value={signedIn ? "On your relays" : "Your audience, on Nostr"}
+            />
+          </dl>
+        )}
       </div>
-      {!compact && (
-        <dl className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Metric
-            icon={Zap}
-            label="Lightning address"
-            value={signedIn ? (lud16 ?? "Not set") : "Set after sign-up"}
-          />
-          <Metric
-            icon={Users}
-            label="Followers"
-            value={signedIn ? "On your relays" : "Your audience, on Nostr"}
-          />
-        </dl>
-      )}
     </section>
   );
 }

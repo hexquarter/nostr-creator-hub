@@ -210,7 +210,10 @@ export function daysLeft(badge: CreatorBadge): number {
   return Math.max(0, Math.ceil((badge.expiresAt - Date.now()) / DAY_MS));
 }
 
-const getServerSnapshot = (): CreatorBadge[] => [];
+// Must be a stable reference: a fresh [] on every render trips React's
+// "getServerSnapshot should be cached" warning.
+const EMPTY_BADGES: CreatorBadge[] = [];
+const getServerSnapshot = (): CreatorBadge[] => EMPTY_BADGES;
 
 export function useCreatorBadges(): CreatorBadge[] {
   return useSyncExternalStore(

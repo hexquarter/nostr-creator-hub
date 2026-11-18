@@ -24,7 +24,12 @@ import { useNostr } from "./nostr-provider";
 import { compactNumber, timeAgo } from "@/lib/format";
 import { contentWithoutImages, type FeedNote } from "@/lib/nostr/social";
 import { shortNpub } from "@/lib/nostr/profiles";
-import { isBadgeActive, useCreatorBadges, DEFAULT_BADGE_SATS } from "@/lib/nostr/badges";
+import {
+  isBadgeActive,
+  useCreatorBadges,
+  DEFAULT_BADGE_SATS,
+  BADGE_DAYS,
+} from "@/lib/nostr/badges";
 import { usePreferences } from "@/lib/preferences";
 import {
   DropdownMenu,
@@ -256,37 +261,35 @@ export function PostCard({ post }: { post: Post }) {
       </header>
 
       {locked ? (
-        <div className="relative overflow-hidden rounded-xl bg-amber-50/50 ring-1 ring-amber-100">
-          <p
-            aria-hidden
-            className="select-none whitespace-pre-wrap break-words p-4 text-[15px] leading-relaxed text-zinc-800 blur-[6px] [overflow-wrap:anywhere]"
-          >
-            {post.content.slice(0, 320)}
-          </p>
-          <div className="absolute inset-0 grid place-items-center bg-gradient-to-b from-white/30 via-white/80 to-white p-4">
-            <div className="max-w-sm text-center">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[9.5px] font-bold uppercase tracking-wider text-amber-800">
-                <Lock className="size-3" /> Members only
-              </span>
-              <p className="mt-2 text-[13.5px] font-semibold text-zinc-900">
-                {post.author}’s creator badge unlocks this post
-              </p>
-              <p className="mt-1 text-[11.5px] leading-relaxed text-zinc-500">
-                One badge opens every members-only post from {post.author}.
-              </p>
-              <button
-                onClick={() =>
-                  ui.openBadge({
-                    creator: post.authorPubkey,
-                    name: post.author,
-                    sats: badgeSats,
-                  })
-                }
-                className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2 text-[12px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
-              >
-                <Crown className="size-3.5" /> Get badge · {compactNumber(badgeSats)} sats/mo
-              </button>
-            </div>
+        <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-amber-50 via-white to-orange-50 ring-1 ring-amber-100">
+          <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+            <div className="absolute -left-10 -top-10 size-40 rounded-full bg-amber-200/60 blur-3xl" />
+            <div className="absolute -bottom-12 -right-8 size-44 rounded-full bg-orange-200/60 blur-3xl" />
+          </div>
+          <div className="relative flex flex-col items-center gap-2 px-5 py-8 text-center">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[9.5px] font-bold uppercase tracking-wider text-amber-800">
+              <Lock className="size-3" /> Members only
+            </span>
+            <p className="text-[13.5px] font-semibold text-zinc-900">This post is hidden</p>
+            <p className="max-w-xs text-[11.5px] leading-relaxed text-zinc-500">
+              Unlock every members-only post from {post.author} with one Lightning payment. No
+              subscription, no auto-renew.
+            </p>
+            <button
+              onClick={() =>
+                ui.openBadge({
+                  creator: post.authorPubkey,
+                  name: post.author,
+                  sats: badgeSats,
+                })
+              }
+              className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2 text-[12px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
+            >
+              <Zap className="size-3.5" /> Unlock with Lightning · {compactNumber(badgeSats)} sats
+            </button>
+            <p className="text-[10.5px] text-zinc-400">
+              {BADGE_DAYS} days of access · paid directly to {post.author}
+            </p>
           </div>
         </div>
       ) : (
@@ -294,11 +297,11 @@ export function PostCard({ post }: { post: Post }) {
       )}
 
       {locked && images.length > 0 && (
-        <div className="relative grid aspect-[16/10] w-full place-items-center overflow-hidden rounded-xl bg-gradient-to-br from-amber-100 via-amber-50 to-orange-100 ring-1 ring-amber-100">
-          <div className="text-center">
-            <Lock className="mx-auto size-6 text-amber-700/70" />
-            <p className="mt-1 text-[11.5px] font-semibold text-amber-800">Members-only media</p>
-          </div>
+        <div className="flex items-center gap-2 rounded-xl bg-zinc-50 px-4 py-3 ring-1 ring-zinc-100">
+          <Lock className="size-3.5 shrink-0 text-zinc-400" />
+          <p className="text-[11.5px] text-zinc-500">
+            {images.length} members-only image{images.length === 1 ? "" : "s"} hidden
+          </p>
         </div>
       )}
 

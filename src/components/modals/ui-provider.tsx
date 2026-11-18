@@ -904,6 +904,8 @@ function BadgeModal({
   const [nwcUri, setNwcUri] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [invoice, setInvoice] = useState("");
+  const [creatingInvoice, setCreatingInvoice] = useState(false);
 
   const creator = options.creator;
   const sats = options.sats ?? DEFAULT_BADGE_SATS;
@@ -918,6 +920,8 @@ function BadgeModal({
     setNwcUri("");
     setConnecting(false);
     setPaying(false);
+    setInvoice("");
+    setCreatingInvoice(false);
   }, [open]);
 
   useEffect(() => {
@@ -955,7 +959,22 @@ function BadgeModal({
     }
   };
 
-  const buy = async () => {
+  const grantBadge = () => {
+    if (!creator) return;
+    const badge = grantCreatorBadge(creator, sats);
+    // Signed proof of the purchase: lets the creator count members and lets
+    // this reader restore the badge on another device.
+    void announceCreatorBadge({
+      creator,
+      sats,
+      expiresAt: badge.expiresAt,
+      signAndPublish: nostr.signAndPublish,
+    }).catch(() => undefined);
+    toast.success(`Creator badge active — ${daysLeft(badge)} days of members-only posts`);
+    onClose();
+  };
+
+  const buyWithWallet = async () => {
     if (!creator) {
       toast.error("This creator hasn't set up a badge yet.");
       return;
@@ -968,24 +987,43 @@ function BadgeModal({
     try {
       const profile = creatorProfile ?? (await fetchProfile(creator).catch(() => null));
       const address = lightningAddressFor(creator, profile);
-      const invoice = await requestPaymentInvoice(address, sats);
-      await nostr.payInvoice(invoice);
-      const badge = grantCreatorBadge(creator, sats);
-      // Signed proof of the purchase: lets the creator count members and lets
-      // this reader restore the badge on another device.
-      void announceCreatorBadge({
-        creator,
-        sats,
-        expiresAt: badge.expiresAt,
-        signAndPublish: nostr.signAndPublish,
-      }).catch(() => undefined);
-      toast.success(`Creator badge active — ${daysLeft(badge)} days of members-only posts`);
-      onClose();
+      const nextInvoice = await requestPaymentInvoice(address, sats);
+      await nostr.payInvoice(nextInvoice);
+      grantBadge();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Couldn't buy that badge.");
     } finally {
       setPaying(false);
     }
+  };
+
+  const createInvoice = async () => {
+    if (!creator) {
+      toast.error("This creator hasn't set up a badge yet.");
+      return;
+    }
+    setCreatingInvoice(true);
+    try {
+      const profile = creatorProfile ?? (await fetchProfile(creator).catch(() => null));
+      const address = lightningAddressFor(creator, profile);
+      setInvoice(await requestPaymentInvoice(address, sats));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't create a Lightning invoice.");
+    } finally {
+      setCreatingInvoice(false);
+    }
+  };
+
+  const primary = async () => {
+    if (invoice) {
+      grantBadge();
+      return;
+    }
+    if (nostr.wallet.connected) {
+      await buyWithWallet();
+      return;
+    }
+    await createInvoice();
   };
 
   return (
@@ -1048,7 +1086,36 @@ function BadgeModal({
               </li>
             </ul>
 
-            {nostr.wallet.connected ? (
+            {invoice ? (
+              <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
+                <p className="text-[12px] font-semibold text-zinc-900">
+                  Scan or open in your Lightning wallet
+                </p>
+                <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm">
+                  <QRCodeSVG value={invoice.toUpperCase()} size={136} level="M" />
+                </div>
+                <p className="mt-2 text-[12px] font-semibold text-zinc-900">
+                  {sats.toLocaleString()} sats
+                </p>
+                <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
+                  <a href={`lightning:${invoice}`} className="text-brand hover:underline">
+                    Open wallet
+                  </a>
+                  <button
+                    onClick={() => {
+                      void navigator.clipboard.writeText(invoice);
+                      toast.success("Invoice copied");
+                    }}
+                    className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
+                  >
+                    <Copy className="size-3" /> Copy invoice
+                  </button>
+                </div>
+                <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
+                  After your wallet confirms the payment, tap “I’ve paid” to unlock on this device.
+                </p>
+              </div>
+            ) : nostr.wallet.connected ? (
               <p className="rounded-lg bg-zinc-50 px-3 py-2 text-[11.5px] text-zinc-500 ring-1 ring-zinc-100">
                 Paying with {nostr.wallet.alias ?? "your connected wallet"}. Crays never holds the
                 sats.
@@ -1056,7 +1123,11 @@ function BadgeModal({
             ) : (
               <div className="rounded-xl border border-zinc-200 p-3">
                 <p className="text-[12px] font-semibold text-zinc-900">
-                  Connect a Lightning wallet to pay
+                  Pay with any Lightning wallet
+                </p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
+                  Tap “Pay with Lightning” below for an invoice you can scan or open in any wallet.
+                  Or connect a NIP-47 wallet to pay in one tap.
                 </p>
                 <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                   <input
@@ -1073,9 +1144,6 @@ function BadgeModal({
                     {connecting ? <Loader2 className="size-4 animate-spin" /> : "Connect"}
                   </PrimaryBtn>
                 </div>
-                <p className="mt-1.5 text-[11px] text-zinc-500">
-                  Any NIP-47 wallet works. Payments go straight to the creator.
-                </p>
               </div>
             )}
           </>
@@ -1088,14 +1156,28 @@ function BadgeModal({
             </PrimaryBtn>
           ) : (
             <>
-              <GhostBtn onClick={onClose}>Maybe later</GhostBtn>
+              <GhostBtn onClick={onClose}>{invoice ? "Cancel" : "Maybe later"}</GhostBtn>
               <PrimaryBtn
                 className="!bg-amber-500 hover:!bg-amber-600"
-                disabled={!nostr.wallet.connected || paying}
-                onClick={() => void buy()}
+                disabled={paying || creatingInvoice}
+                onClick={() => void primary()}
               >
-                {paying ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}
-                {paying ? "Paying…" : `Pay ${sats.toLocaleString()} sats`}
+                {paying || creatingInvoice ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : invoice ? (
+                  <Check className="size-4" />
+                ) : (
+                  <Zap className="size-4" />
+                )}
+                {paying
+                  ? "Paying…"
+                  : creatingInvoice
+                    ? "Creating invoice…"
+                    : invoice
+                      ? "I’ve paid — unlock"
+                      : nostr.wallet.connected
+                        ? `Pay ${sats.toLocaleString()} sats`
+                        : "Pay with Lightning"}
               </PrimaryBtn>
             </>
           )}

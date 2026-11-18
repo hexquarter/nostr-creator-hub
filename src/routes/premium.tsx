@@ -211,7 +211,7 @@ function CreatorDashboard() {
       </div>
 
       {/* Activity */}
-      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mt-4 grid grid-cols-2 gap-2">
         <DashboardStat label="Posts" value={stats ? compactNumber(stats.posts) : "—"} />
         <DashboardStat label="Followers" value={stats ? compactNumber(stats.followers) : "—"} />
         <DashboardStat label="Members" value={members == null ? "—" : compactNumber(members)} />
