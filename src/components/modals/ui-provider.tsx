@@ -45,6 +45,7 @@ import {
   creatorPassDaysLeft,
   isCreatorPassActive,
   useCreatorPass,
+  type CardOnramp,
 } from "@/lib/nostr/creator-pass";
 import { hasPasskey, hasWebAuthn } from "@/lib/nostr/passkey";
 import { useBtcPrice, satsToUsd, usdToSats, formatUsd } from "@/lib/nostr/price";
@@ -90,6 +91,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   CreditCard,
+  Coins,
   Crown,
   Sparkles,
   Image as ImageIcon,
@@ -1413,6 +1415,7 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState("");
   const [method, setMethod] = useState<"lightning" | "card">("lightning");
+  const [stablecoin, setStablecoin] = useState<CardOnramp | null>(null);
   const liveSatsRef = useRef(liveSats);
   liveSatsRef.current = liveSats;
 
@@ -1448,6 +1451,7 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
       setLoading(false);
       setPaying(false);
       setError("");
+      setStablecoin(null);
       return;
     }
     if (active) return;
@@ -1511,7 +1515,13 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
     }
   };
 
-  const onramps = cardOnramps(invoice || undefined, CREATOR_PASS_USD);
+  const onramps = cardOnramps(CREATOR_PASS_USD);
+
+  const activateStablecoin = () => {
+    activateCreatorPass(quote);
+    toast.success("Thanks — Crays premium is active");
+    onClose();
+  };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -1582,7 +1592,10 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
                     ).map(([value, label]) => (
                       <button
                         key={value}
-                        onClick={() => setMethod(value)}
+                        onClick={() => {
+                          setMethod(value);
+                          setStablecoin(null);
+                        }}
                         className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors ${
                           method === value
                             ? "bg-white text-zinc-900 shadow-sm"
@@ -1668,64 +1681,112 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
                     </div>
                   ) : (
                     <div className="rounded-xl bg-white p-3.5 ring-1 ring-zinc-100">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <p className="text-[12px] font-semibold text-zinc-900">
-                          Pay {formatUsd(CREATOR_PASS_USD)} with a card
-                        </p>
-                        <p className="text-[10.5px] text-zinc-400">
-                          ≈ {quote.toLocaleString()} sats
-                        </p>
-                      </div>
-                      <p className="mt-0.5 text-[10.5px] leading-relaxed text-zinc-500">
-                        Buy Bitcoin in a provider, then pay the Lightning invoice — premium turns on
-                        when it settles.
-                      </p>
-                      <ul className="mt-2.5 space-y-1.5">
-                        {onramps.map((onramp) => {
-                          const disabled = onramp.needsInvoice && !invoice;
-                          const Icon = onramp.id === "spark" ? Zap : CreditCard;
-                          const body = (
-                            <>
-                              <span className="grid size-7 shrink-0 place-items-center rounded-md bg-zinc-100 text-zinc-500">
-                                <Icon className="size-3.5" />
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="block text-[12px] font-semibold text-zinc-800">
-                                  {onramp.label}
-                                </span>
-                                <span className="block text-[10.5px] leading-snug text-zinc-500">
-                                  {disabled ? "Waiting for your invoice…" : onramp.description}
-                                </span>
-                              </span>
-                              {!disabled && (
-                                <ArrowUpRight className="size-3.5 shrink-0 text-zinc-300" />
-                              )}
-                            </>
-                          );
-                          return (
-                            <li key={onramp.id}>
-                              {disabled ? (
-                                <div className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 opacity-60 ring-1 ring-zinc-100">
-                                  {body}
-                                </div>
-                              ) : (
-                                <a
-                                  href={onramp.href}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 ring-1 ring-zinc-100 transition-colors hover:bg-zinc-50 hover:ring-amber-200"
-                                >
-                                  {body}
-                                </a>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                      <p className="mt-2 text-[10px] leading-relaxed text-zinc-400">
-                        Providers open in a new tab. Apple Pay needs Safari; Google Pay needs
-                        Chrome.
-                      </p>
+                      {stablecoin?.address ? (
+                        <>
+                          <button
+                            onClick={() => setStablecoin(null)}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-zinc-500 hover:text-zinc-800"
+                          >
+                            <ChevronLeft className="size-3.5" /> All payment options
+                          </button>
+                          <p className="mt-2 text-center text-[12px] font-semibold text-zinc-900">
+                            Send {CREATOR_PASS_USD} {stablecoin.id.toUpperCase()} on{" "}
+                            {stablecoin.network}
+                          </p>
+                          <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm ring-1 ring-zinc-100">
+                            <QRCodeSVG value={stablecoin.address} size={136} level="M" />
+                          </div>
+                          <p className="mt-2 break-all rounded-lg bg-zinc-50 px-2.5 py-2 text-center font-mono text-[10.5px] leading-relaxed text-zinc-600 ring-1 ring-zinc-100">
+                            {stablecoin.address}
+                          </p>
+                          <button
+                            onClick={() => {
+                              void navigator.clipboard.writeText(stablecoin.address ?? "");
+                              toast.success("Address copied");
+                            }}
+                            className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-zinc-100 px-3 py-2 text-[11.5px] font-semibold text-zinc-700 hover:bg-zinc-200"
+                          >
+                            <Copy className="size-3.5" /> Copy address
+                          </button>
+                          <p className="mt-2 text-[10px] leading-relaxed text-zinc-400">
+                            Only send {stablecoin.id.toUpperCase()} on {stablecoin.network} to this
+                            address. Stablecoin transfers aren’t verified automatically yet.
+                          </p>
+                          <PrimaryBtn
+                            className="mt-2 w-full !bg-amber-500 hover:!bg-amber-600"
+                            onClick={activateStablecoin}
+                          >
+                            <Check className="size-4" /> I’ve sent it — activate
+                          </PrimaryBtn>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-baseline justify-between gap-2">
+                            <p className="text-[12px] font-semibold text-zinc-900">
+                              Pay {formatUsd(CREATOR_PASS_USD)}
+                            </p>
+                            <p className="text-[10.5px] text-zinc-400">
+                              ≈ {quote.toLocaleString()} sats
+                            </p>
+                          </div>
+                          <p className="mt-0.5 text-[10.5px] leading-relaxed text-zinc-500">
+                            Buy Bitcoin with a card, or send USDC/USDT. Lightning activates
+                            automatically; stablecoin transfers are confirmed manually.
+                          </p>
+                          <ul className="mt-2.5 space-y-1.5">
+                            {onramps.map((onramp) => {
+                              const Icon = onramp.id === "moonpay" ? CreditCard : Coins;
+                              const body = (
+                                <>
+                                  <span className="grid size-7 shrink-0 place-items-center rounded-md bg-zinc-100 text-zinc-500">
+                                    <Icon className="size-3.5" />
+                                  </span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block text-[12px] font-semibold text-zinc-800">
+                                      {onramp.label}
+                                    </span>
+                                    <span className="block text-[10.5px] leading-snug text-zinc-500">
+                                      {onramp.description}
+                                    </span>
+                                  </span>
+                                  {onramp.href && (
+                                    <ArrowUpRight className="size-3.5 shrink-0 text-zinc-300" />
+                                  )}
+                                </>
+                              );
+                              return (
+                                <li key={onramp.id}>
+                                  {onramp.href ? (
+                                    <a
+                                      href={onramp.href}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 ring-1 ring-zinc-100 transition-colors hover:bg-zinc-50 hover:ring-amber-200"
+                                    >
+                                      {body}
+                                    </a>
+                                  ) : onramp.address ? (
+                                    <button
+                                      onClick={() => setStablecoin(onramp)}
+                                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left ring-1 ring-zinc-100 transition-colors hover:bg-zinc-50 hover:ring-amber-200"
+                                    >
+                                      {body}
+                                    </button>
+                                  ) : (
+                                    <div className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 opacity-60 ring-1 ring-zinc-100">
+                                      {body}
+                                    </div>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                          <p className="mt-2 text-[10px] leading-relaxed text-zinc-400">
+                            MoonPay opens in a new tab. Apple Pay needs Safari; Google Pay needs
+                            Chrome.
+                          </p>
+                        </>
+                      )}
                     </div>
                   )}
                 </>
@@ -1760,7 +1821,7 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
               >
                 Write a post
               </PrimaryBtn>
-            ) : nostr.wallet.connected && invoice ? (
+            ) : method === "lightning" && nostr.wallet.connected && invoice ? (
               <PrimaryBtn
                 className="!bg-amber-500 hover:!bg-amber-600"
                 disabled={paying}

@@ -27,20 +27,21 @@ polls the wallet's [LUD-21](https://github.com/lnurl/luds/blob/luds/21.md)
 no "I've paid" button. The same verification unlocks fan memberships and
 single-post purchases, so scanning with any wallet works.
 
-Card payments live in a **Card** tab next to the QR. The flow follows the
+Card and stablecoin payments live in a **Card** tab next to the QR. The flow
+follows the
 [Breez Spark SDK buy-bitcoin guide](https://sdk-doc-spark.breez.technology/guide/buy_bitcoin.html):
-the provider returns a URL to open in the browser (or the Cash App app), and
-the purchase arrives over Lightning so the same LUD-21 check confirms it.
 
-- **Cash App** deep-links `cash.app/launch/lightning/<bolt11>`. The invoice
-  carries an amount, which is what lets Cash App fund the payment from a debit
-  card or Cash App balance instead of only an existing BTC balance. It stays
-  disabled until an invoice exists.
-- **MoonPay** opens its buy page with the USD amount prefilled. Set
+- **MoonPay** opens its hosted checkout with the USD amount prefilled. Set
   `VITE_CRAYS_MOONPAY_URL` to an SDK-generated `buy_bitcoin` URL to enable the
-  hosted Apple Pay / Google Pay checkout for the Crays account.
-- **Spark** opens `spark.money`; the buyer purchases sats there and pays the
-  same invoice.
+  signed Apple Pay / Google Pay checkout for the Crays account. The buyer pays
+  the Lightning invoice afterwards, so the same LUD-21 check confirms it.
+- **USDC / USDT** sends the stablecoin directly to the Crays address, shown as a
+  QR with a copy button. Set `VITE_CRAYS_USDC_ADDRESS` and
+  `VITE_CRAYS_USDT_ADDRESS` (plus their network labels) to turn these rows on.
+  The amount is simply `$50`, since stablecoins are 1:1 with the dollar.
+  Transfers can't be verified from the browser, so this path has a clearly
+  labelled "I've sent it — activate" confirmation. Only confirm after the
+  transfer is sent.
 
 The full Spark SDK widget needs a Breez API key and a native or server runtime,
 so this static build deep-links the providers instead. Apple Pay requires
@@ -51,13 +52,16 @@ view.
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
 | `VITE_CRAYS_LIGHTNING_ADDRESS` | Lightning address (or LNURL) that receives Crays premium. Required — the `crays@npub.cash` fallback cannot issue invoices. |
 | `VITE_CRAYS_MOONPAY_URL`       | Optional MoonPay merchant URL. Defaults to MoonPay's public buy page with the USD amount prefilled.                        |
-| `VITE_CRAYS_SPARK_URL`         | Optional Spark checkout URL. Defaults to `spark.money`.                                                                    |
-| `VITE_CRAYS_CASHAPP_URL`       | Optional Cash App override. Otherwise the modal deep-links `cash.app/launch/lightning/<invoice>` once an invoice exists.   |
+| `VITE_CRAYS_USDC_ADDRESS`      | USDC deposit address. Unset hides the USDC row.                                                                            |
+| `VITE_CRAYS_USDC_NETWORK`      | Network label shown with the USDC address. Defaults to `Solana`.                                                           |
+| `VITE_CRAYS_USDT_ADDRESS`      | USDT deposit address. Unset hides the USDT row.                                                                            |
+| `VITE_CRAYS_USDT_NETWORK`      | Network label shown with the USDT address. Defaults to `Tron`.                                                             |
 
 Set these at build time. For GitHub Pages, add repository variables
-`CRAYS_LIGHTNING_ADDRESS`, `CRAYS_CASHAPP_URL`, `CRAYS_MOONPAY_URL` and
-`CRAYS_SPARK_URL` under **Settings → Secrets and variables → Actions →
-Variables**; `.github/workflows/deploy.yml` maps them to the `VITE_*` names
+`CRAYS_LIGHTNING_ADDRESS`, `CRAYS_MOONPAY_URL`, `CRAYS_USDC_ADDRESS`,
+`CRAYS_USDC_NETWORK`, `CRAYS_USDT_ADDRESS` and `CRAYS_USDT_NETWORK` under
+**Settings → Secrets and variables → Actions → Variables**;
+`.github/workflows/deploy.yml` maps them to the `VITE_*` names
 above. Leaving them unset keeps the placeholder checkout. To create the
 receiving address, claim a username for the Crays npub at
 [npub.cash](https://npub.cash) (or use any LNURL-pay address) and set

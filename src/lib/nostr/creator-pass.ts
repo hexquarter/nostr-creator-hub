@@ -40,61 +40,75 @@ export const CREATOR_PASS_CONFIGURED = Boolean(
 );
 
 export type CardOnramp = {
-  id: "cashapp" | "moonpay" | "spark";
+  id: "moonpay" | "usdc" | "usdt";
   label: string;
   description: string;
-  href: string;
-  /** Cash App pays the existing invoice, so it needs one first. */
-  needsInvoice?: boolean;
+  /** External checkout URL for fiat providers. */
+  href?: string;
+  /** Stablecoin deposit address. */
+  address?: string;
+  /** Network the stablecoin must be sent on. */
+  network?: string;
 };
 
 /**
- * Fiat on-ramps for creators who don't hold sats yet. This mirrors the Breez
- * Spark SDK's "buy bitcoin" flow: the provider returns a URL to open in the
- * browser (or the Cash App app), and the purchase arrives over Lightning.
+ * Non-Lightning ways to pay for Crays premium.
  *
- * The full SDK widget needs a Breez API key and a native/server runtime, so the
- * static web build deep-links the providers instead:
- * - Cash App gets the BOLT-11 invoice itself, which lets it fund the payment
- *   from a card or Cash App balance (an amountless invoice would only allow
- *   paying from an existing BTC balance).
- * - MoonPay opens its buy page with the USD amount prefilled. Replace the URL
- *   with an SDK-generated `buy_bitcoin` link to enable Apple Pay / Google Pay
- *   checkout for the Crays account.
- * - Spark opens the Spark wallet, where the user can buy Bitcoin and then pay
- *   the same invoice.
+ * MoonPay follows the Breez Spark SDK "buy bitcoin" flow: the provider returns
+ * a URL to open in the browser, and the buyer pays the Lightning invoice
+ * afterwards. The full SDK widget needs a Breez API key and a native/server
+ * runtime, so the static web build deep-links the hosted checkout instead.
+ *
+ * USDC and USDT are sent directly to the Crays addresses configured at build
+ * time. They are stablecoins, so the amount is simply the USD price. A
+ * transfer can't be verified from the browser, so the checkout asks the buyer
+ * to confirm only after the transfer is sent.
  */
-export function cardOnramps(invoice?: string, usd = CREATOR_PASS_USD): CardOnramp[] {
+export function cardOnramps(usd = CREATOR_PASS_USD): CardOnramp[] {
   const env = import.meta.env;
-  const cashAppOverride = (env.VITE_CRAYS_CASHAPP_URL as string | undefined)?.trim();
   const moonpay = (env.VITE_CRAYS_MOONPAY_URL as string | undefined)?.trim();
-  const spark = (env.VITE_CRAYS_SPARK_URL as string | undefined)?.trim();
+  const usdc = (env.VITE_CRAYS_USDC_ADDRESS as string | undefined)?.trim();
+  const usdcNetwork = (env.VITE_CRAYS_USDC_NETWORK as string | undefined)?.trim() || "Solana";
+  const usdt = (env.VITE_CRAYS_USDT_ADDRESS as string | undefined)?.trim();
+  const usdtNetwork = (env.VITE_CRAYS_USDT_NETWORK as string | undefined)?.trim() || "Tron";
   const moonpayPrefill = `https://www.moonpay.com/buy/btc?baseCurrencyAmount=${Math.round(
     usd,
   )}&baseCurrencyCode=usd&defaultCurrencyCode=btc`;
-  return [
-    {
-      id: "cashapp",
-      label: "Cash App",
-      description: "Pay this invoice from your Cash App balance or a debit card.",
-      href:
-        cashAppOverride ||
-        (invoice ? `https://cash.app/launch/lightning/${invoice}` : "https://cash.app/"),
-      needsInvoice: !cashAppOverride,
-    },
+
+  const onramps: CardOnramp[] = [
     {
       id: "moonpay",
       label: "MoonPay",
       description: "Buy Bitcoin with Apple Pay, Google Pay or a card.",
       href: moonpay || moonpayPrefill,
     },
-    {
-      id: "spark",
-      label: "Spark",
-      description: "Buy Bitcoin in Spark, then pay the same invoice.",
-      href: spark || "https://spark.money",
-    },
   ];
+  if (usdc) {
+    onramps.push({
+      id: "usdc",
+      label: "USDC",
+      description: `Send USDC on ${usdcNetwork}.`,
+      address: usdc,
+      network: usdcNetwork,
+    });
+  }
+  if (usdt) {
+    onramps.push({
+      id: "usdt",
+      label: "USDT",
+      description: `Send USDT on ${usdtNetwork}.`,
+      address: usdt,
+      network: usdtNetwork,
+    });
+  }
+  if (!usdc && !usdt) {
+    onramps.push({
+      id: "usdc",
+      label: "USDC / USDT",
+      description: "Stablecoin checkout isn't set up yet.",
+    });
+  }
+  return onramps;
 }
 
 const STORAGE_PREFIX = "crays.creator-pass.v2";
