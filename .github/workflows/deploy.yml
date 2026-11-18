@@ -50,7 +50,6 @@ jobs:
       - name: Build static site
         env:
           GITHUB_PAGES: "true"
-          VITE_STATIC_HOSTING: "true"
           BASE_PATH: ${{ steps.base.outputs.path }}
           # Set these as repository variables (Settings → Secrets and variables →
           # Actions → Variables). Empty values keep the placeholder checkout.

@@ -24,7 +24,6 @@ import {
   Users,
   Link as LinkIcon,
   FileText,
-  Camera,
   KeyRound,
   MessageCircle,
   Crown,
@@ -65,11 +64,6 @@ const features = [
     desc: "Send and receive sats with any NIP-47 wallet. 100% goes to the creator.",
   },
   {
-    icon: Camera,
-    title: "Instagram import",
-    desc: "Bring your posts and photos across, re-hosted on Blossom.",
-  },
-  {
     icon: Users,
     title: "Follow graph",
     desc: "Your follow list lives on Nostr, so it travels with your key to any client.",
@@ -86,7 +80,7 @@ const premiumBenefits = [
   "Publish members-only notes and long-form articles",
   "Fans pay you directly over Lightning — 0% platform fee",
   "Members, members-only posts and zaps in one dashboard",
-  "Passkey sign-in, encrypted DMs and Instagram import included",
+  "Passkey sign-in and encrypted DMs included",
 ];
 
 function Premium() {

@@ -1,7 +1,7 @@
 # Crays
 
 A premium Nostr client for Bitcoin creators: passkey-first sign-in, real Nostr
-profiles and feeds, Lightning zaps, members-only posts, and Instagram import.
+profiles and feeds, Lightning zaps, and members-only posts.
 
 ## Local development
 
@@ -27,14 +27,30 @@ polls the wallet's [LUD-21](https://github.com/lnurl/luds/blob/luds/21.md)
 no "I've paid" button. The same verification unlocks fan memberships and
 single-post purchases, so scanning with any wallet works.
 
-Card on-ramp buttons (Cash App, MoonPay, Spark) sit next to the QR for people
-who don't hold sats yet. Cash App deep-links straight into the invoice; MoonPay
-and Spark open a hosted buy flow and the buyer pays the invoice afterwards.
+Card payments live in a **Card** tab next to the QR. The flow follows the
+[Breez Spark SDK buy-bitcoin guide](https://sdk-doc-spark.breez.technology/guide/buy_bitcoin.html):
+the provider returns a URL to open in the browser (or the Cash App app), and
+the purchase arrives over Lightning so the same LUD-21 check confirms it.
+
+- **Cash App** deep-links `cash.app/launch/lightning/<bolt11>`. The invoice
+  carries an amount, which is what lets Cash App fund the payment from a debit
+  card or Cash App balance instead of only an existing BTC balance. It stays
+  disabled until an invoice exists.
+- **MoonPay** opens its buy page with the USD amount prefilled. Set
+  `VITE_CRAYS_MOONPAY_URL` to an SDK-generated `buy_bitcoin` URL to enable the
+  hosted Apple Pay / Google Pay checkout for the Crays account.
+- **Spark** opens `spark.money`; the buyer purchases sats there and pays the
+  same invoice.
+
+The full Spark SDK widget needs a Breez API key and a native or server runtime,
+so this static build deep-links the providers instead. Apple Pay requires
+Safari and Google Pay requires Chrome; both fail inside an iframe or plain web
+view.
 
 | Variable                       | Purpose                                                                                                                    |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
 | `VITE_CRAYS_LIGHTNING_ADDRESS` | Lightning address (or LNURL) that receives Crays premium. Required — the `crays@npub.cash` fallback cannot issue invoices. |
-| `VITE_CRAYS_MOONPAY_URL`       | Optional MoonPay merchant URL. Defaults to MoonPay's public buy page.                                                      |
+| `VITE_CRAYS_MOONPAY_URL`       | Optional MoonPay merchant URL. Defaults to MoonPay's public buy page with the USD amount prefilled.                        |
 | `VITE_CRAYS_SPARK_URL`         | Optional Spark checkout URL. Defaults to `spark.money`.                                                                    |
 | `VITE_CRAYS_CASHAPP_URL`       | Optional Cash App override. Otherwise the modal deep-links `cash.app/launch/lightning/<invoice>` once an invoice exists.   |
 
@@ -74,7 +90,6 @@ publishes `dist/client` through the official Pages actions.
 | Setting                          | Effect                                                                                                             |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `BASE_PATH`                      | Asset and router prefix. `/<repo>/` for project sites, `/` for `<user>.github.io` sites. The workflow computes it. |
-| `VITE_STATIC_HOSTING`            | Turns off features that need a server (fetching an Instagram link). Instagram export uploads keep working.         |
 | `nitro: false`                   | Skips the server bundle — GitHub Pages can't run one.                                                              |
 | `prerender`                      | Renders `/`, `/discover`, `/profile`, `/premium`, … to `dist/client/<route>/index.html`.                           |
 | `scripts/gh-pages-postbuild.mjs` | Adds `.nojekyll` (so `assets/` isn't stripped) and a branded `404.html`.                                           |

@@ -44,12 +44,6 @@ export function CreatorToolsHero({ compact = false }: { compact?: boolean }) {
                 >
                   Write a post
                 </button>
-                <button
-                  onClick={ui.openImportInstagram}
-                  className="rounded-full bg-white/10 px-5 py-2.5 text-[13px] font-semibold text-white ring-1 ring-white/20 hover:bg-white/20"
-                >
-                  Import from Instagram
-                </button>
               </>
             ) : (
               <>

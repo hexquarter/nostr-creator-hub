@@ -50,15 +50,6 @@ import { hasPasskey, hasWebAuthn } from "@/lib/nostr/passkey";
 import { useBtcPrice, satsToUsd, usdToSats, formatUsd } from "@/lib/nostr/price";
 import { isLightningInvoice, requestPaymentDetails, requestPaymentInvoice } from "@/lib/nostr/zaps";
 import {
-  fetchInstagramPost,
-  fetchRemoteImage,
-  parseInstagramUrl,
-  type ImportedPost,
-} from "@/lib/instagram";
-import { readInstagramExportFile, type InstagramExport } from "@/lib/instagram-export";
-import { IS_STATIC_HOSTING } from "@/lib/hosting";
-import { base64ToBytes } from "@/lib/crypto";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -126,7 +117,6 @@ import {
   Fingerprint,
   KeyRound,
   Radio,
-  Camera,
   ShieldCheck,
   ArrowRight,
   AlertTriangle,
@@ -190,7 +180,6 @@ type UICtx = {
   signOut: () => void;
   requireAuth: (intent: string, cb?: () => void) => boolean;
   openAuth: (o?: AuthOptions) => void;
-  openImportInstagram: () => void;
 
   openZap: (o?: ZapOptions) => void;
   openCompose: (o?: ComposeOptions) => void;
@@ -224,7 +213,6 @@ export function useUI() {
 export function UIProvider({ children }: { children: ReactNode }) {
   const { account, signOut: nostrSignOut } = useNostr();
   const [auth, setAuth] = useState<AuthOptions | null>(null);
-  const [importIG, setImportIG] = useState(false);
 
   const [zap, setZap] = useState<ZapOptions | null>(null);
   const [compose, setCompose] = useState<ComposeOptions | null>(null);
@@ -277,13 +265,6 @@ export function UIProvider({ children }: { children: ReactNode }) {
       signOut,
       requireAuth: (intent, cb) => gate(intent, () => cb?.()),
       openAuth: (o) => setAuth(o ?? {}),
-      openImportInstagram: () => {
-        if (!user) {
-          setAuth({ intent: "import your Instagram content" });
-          return;
-        }
-        setImportIG(true);
-      },
 
       openZap: (o) => gate("send a zap", () => setZap(o ?? {})),
       openCompose: (o) => gate("post to Nostr", () => setCompose(o ?? { mode: "post" })),
@@ -354,7 +335,6 @@ export function UIProvider({ children }: { children: ReactNode }) {
         onClose={() => setAuth(null)}
         onSignedIn={() => setAuth(null)}
       />
-      <ImportInstagramModal open={importIG} onClose={() => setImportIG(false)} />
     </UIContext.Provider>
   );
 }
@@ -1432,6 +1412,7 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
   const [loading, setLoading] = useState(false);
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState("");
+  const [method, setMethod] = useState<"lightning" | "card">("lightning");
   const liveSatsRef = useRef(liveSats);
   liveSatsRef.current = liveSats;
 
@@ -1530,7 +1511,7 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
     }
   };
 
-  const onramps = cardOnramps(invoice || undefined);
+  const onramps = cardOnramps(invoice || undefined, CREATOR_PASS_USD);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -1580,113 +1561,175 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
 
           {!active && (
             <>
-              <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
-                {!CREATOR_PASS_CONFIGURED ? (
-                  <>
-                    <p className="text-[12px] font-semibold text-zinc-900">
-                      Checkout is almost ready
-                    </p>
-                    <p className="mx-auto mt-1 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
-                      Crays premium payments aren’t connected yet. Once the Crays Lightning address
-                      is live, this is a QR you can pay in one scan.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-[12px] font-semibold text-zinc-900">
-                      {invoice
-                        ? `Scan to pay ${quote.toLocaleString()} sats`
-                        : "Lightning checkout"}
-                    </p>
-                    <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm">
-                      {loading ? (
-                        <Loader2 className="size-6 animate-spin text-zinc-300" />
-                      ) : invoice ? (
-                        <QRCodeSVG value={invoice.toUpperCase()} size={136} level="M" />
+              {!CREATOR_PASS_CONFIGURED ? (
+                <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
+                  <p className="text-[12px] font-semibold text-zinc-900">
+                    Checkout is almost ready
+                  </p>
+                  <p className="mx-auto mt-1 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
+                    Crays premium payments aren’t connected yet. Once the Crays Lightning address is
+                    live, checkout will show a QR you can pay in one scan.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-1 rounded-xl bg-zinc-100 p-1">
+                    {(
+                      [
+                        ["lightning", "Lightning"],
+                        ["card", "Card"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        onClick={() => setMethod(value)}
+                        className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors ${
+                          method === value
+                            ? "bg-white text-zinc-900 shadow-sm"
+                            : "text-zinc-500 hover:text-zinc-800"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {method === "lightning" ? (
+                    <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
+                      <p className="text-[12px] font-semibold text-zinc-900">
+                        {invoice
+                          ? `Scan to pay ${quote.toLocaleString()} sats`
+                          : "Lightning checkout"}
+                      </p>
+                      <div className="mx-auto mt-2 grid size-40 place-items-center rounded-xl bg-white p-3 shadow-sm">
+                        {loading ? (
+                          <Loader2 className="size-6 animate-spin text-zinc-300" />
+                        ) : invoice ? (
+                          <QRCodeSVG value={invoice.toUpperCase()} size={136} level="M" />
+                        ) : (
+                          <span className="px-2 text-[11px] leading-relaxed text-zinc-400">
+                            {error ? "We couldn’t create an invoice." : "Preparing your invoice…"}
+                          </span>
+                        )}
+                      </div>
+                      {invoice ? (
+                        <>
+                          <p className="mt-2 text-[12px] font-semibold text-zinc-900">
+                            {formatUsd(CREATOR_PASS_USD)} · {quote.toLocaleString()} sats
+                          </p>
+                          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
+                            <a href={`lightning:${invoice}`} className="text-brand hover:underline">
+                              Open wallet
+                            </a>
+                            <button
+                              onClick={() => {
+                                void navigator.clipboard.writeText(invoice);
+                                toast.success("Invoice copied");
+                              }}
+                              className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
+                            >
+                              <Copy className="size-3" /> Copy invoice
+                            </button>
+                            <button
+                              onClick={() => void loadInvoice()}
+                              className="text-zinc-600 hover:underline"
+                            >
+                              New invoice
+                            </button>
+                          </div>
+                          <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
+                            {verifyUrl
+                              ? "Crays premium turns on by itself the moment the payment settles."
+                              : "This wallet doesn’t report payments automatically — connect a wallet to pay in one tap."}
+                          </p>
+                          {verifyUrl && (
+                            <p className="mt-1 inline-flex items-center gap-1.5 text-[10.5px] font-semibold text-amber-700">
+                              <Loader2 className="size-3 animate-spin" /> Waiting for payment…
+                            </p>
+                          )}
+                        </>
                       ) : (
-                        <span className="px-2 text-[11px] leading-relaxed text-zinc-400">
-                          {error ? "We couldn’t create an invoice." : "Preparing your invoice…"}
-                        </span>
+                        <>
+                          <p className="mx-auto mt-2 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
+                            {error
+                              ? "Checkout is unavailable right now. Try again in a moment."
+                              : "Creating a Lightning invoice…"}
+                          </p>
+                          {!loading && (
+                            <button
+                              onClick={() => void loadInvoice()}
+                              className="mt-2 text-[11.5px] font-semibold text-brand hover:underline"
+                            >
+                              Try again
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
-                    {invoice ? (
-                      <>
-                        <p className="mt-2 text-[12px] font-semibold text-zinc-900">
-                          {formatUsd(CREATOR_PASS_USD)} · {quote.toLocaleString()} sats
+                  ) : (
+                    <div className="rounded-xl bg-white p-3.5 ring-1 ring-zinc-100">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="text-[12px] font-semibold text-zinc-900">
+                          Pay {formatUsd(CREATOR_PASS_USD)} with a card
                         </p>
-                        <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11.5px] font-semibold">
-                          <a href={`lightning:${invoice}`} className="text-brand hover:underline">
-                            Open wallet
-                          </a>
-                          <button
-                            onClick={() => {
-                              void navigator.clipboard.writeText(invoice);
-                              toast.success("Invoice copied");
-                            }}
-                            className="inline-flex items-center gap-1 text-zinc-600 hover:underline"
-                          >
-                            <Copy className="size-3" /> Copy invoice
-                          </button>
-                          <button
-                            onClick={() => void loadInvoice()}
-                            className="text-zinc-600 hover:underline"
-                          >
-                            New invoice
-                          </button>
-                        </div>
-                        <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
-                          {verifyUrl
-                            ? "Crays premium turns on by itself the moment the payment settles."
-                            : "This wallet doesn’t report payments automatically — connect a wallet to pay in one tap."}
+                        <p className="text-[10.5px] text-zinc-400">
+                          ≈ {quote.toLocaleString()} sats
                         </p>
-                        {verifyUrl && (
-                          <p className="mt-1 inline-flex items-center gap-1.5 text-[10.5px] font-semibold text-amber-700">
-                            <Loader2 className="size-3 animate-spin" /> Waiting for payment…
-                          </p>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <p className="mx-auto mt-2 max-w-[300px] text-[11.5px] leading-relaxed text-zinc-500">
-                          {error
-                            ? "Checkout is unavailable right now. Try again in a moment."
-                            : "Creating a Lightning invoice…"}
-                        </p>
-                        {!loading && (
-                          <button
-                            onClick={() => void loadInvoice()}
-                            className="mt-2 text-[11.5px] font-semibold text-brand hover:underline"
-                          >
-                            Try again
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-
-              <div className="rounded-xl bg-white p-3 ring-1 ring-zinc-100">
-                <p className="text-[10.5px] font-semibold uppercase tracking-wider text-zinc-500">
-                  No sats yet? Pay with a card
-                </p>
-                <div className="mt-2 grid grid-cols-3 gap-2">
-                  {onramps.map((onramp) => (
-                    <a
-                      key={onramp.id}
-                      href={onramp.href}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded-lg bg-zinc-50 px-2 py-2 text-center text-[11.5px] font-semibold text-zinc-700 ring-1 ring-zinc-100 transition-colors hover:bg-white hover:ring-amber-200"
-                    >
-                      {onramp.label}
-                    </a>
-                  ))}
-                </div>
-                <p className="mt-1.5 text-center text-[10px] leading-relaxed text-zinc-400">
-                  Buy sats with a card in a new tab, then pay the Crays invoice.
-                </p>
-              </div>
+                      </div>
+                      <p className="mt-0.5 text-[10.5px] leading-relaxed text-zinc-500">
+                        Buy Bitcoin in a provider, then pay the Lightning invoice — premium turns on
+                        when it settles.
+                      </p>
+                      <ul className="mt-2.5 space-y-1.5">
+                        {onramps.map((onramp) => {
+                          const disabled = onramp.needsInvoice && !invoice;
+                          const Icon = onramp.id === "spark" ? Zap : CreditCard;
+                          const body = (
+                            <>
+                              <span className="grid size-7 shrink-0 place-items-center rounded-md bg-zinc-100 text-zinc-500">
+                                <Icon className="size-3.5" />
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-[12px] font-semibold text-zinc-800">
+                                  {onramp.label}
+                                </span>
+                                <span className="block text-[10.5px] leading-snug text-zinc-500">
+                                  {disabled ? "Waiting for your invoice…" : onramp.description}
+                                </span>
+                              </span>
+                              {!disabled && (
+                                <ArrowUpRight className="size-3.5 shrink-0 text-zinc-300" />
+                              )}
+                            </>
+                          );
+                          return (
+                            <li key={onramp.id}>
+                              {disabled ? (
+                                <div className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 opacity-60 ring-1 ring-zinc-100">
+                                  {body}
+                                </div>
+                              ) : (
+                                <a
+                                  href={onramp.href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 ring-1 ring-zinc-100 transition-colors hover:bg-zinc-50 hover:ring-amber-200"
+                                >
+                                  {body}
+                                </a>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      <p className="mt-2 text-[10px] leading-relaxed text-zinc-400">
+                        Providers open in a new tab. Apple Pay needs Safari; Google Pay needs
+                        Chrome.
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
             </>
           )}
 
@@ -1708,14 +1751,6 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
         <DialogFooter className="gap-2 sm:justify-between">
           <GhostBtn onClick={onClose}>Close</GhostBtn>
           <div className="flex gap-2">
-            <GhostBtn
-              onClick={() => {
-                onClose();
-                ui.openImportInstagram();
-              }}
-            >
-              Import Instagram
-            </GhostBtn>
             {active ? (
               <PrimaryBtn
                 onClick={() => {
@@ -2681,16 +2716,6 @@ function CommandPalette({
           >
             <Pencil className="size-4" /> Write a post
           </CommandItem>
-          {ui.user && (
-            <CommandItem
-              onSelect={() => {
-                onOpenChange(false);
-                ui.openImportInstagram();
-              }}
-            >
-              <Camera className="size-4" /> Import from Instagram
-            </CommandItem>
-          )}
           <CommandItem
             onSelect={() => {
               onOpenChange(false);
@@ -3169,306 +3194,6 @@ function AdvancedRow({
       </span>
       <ArrowRight className="ml-auto size-3.5 shrink-0 text-zinc-300" />
     </button>
-  );
-}
-
-// ---------- Import from Instagram (onboarding + sidebar) ----------
-function ImportInstagramModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const nostr = useNostr();
-  const [step, setStep] = useState<"connect" | "select" | "done">("connect");
-  const [link, setLink] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
-  const [posts, setPosts] = useState<ImportedPost[]>([]);
-  const [exported, setExported] = useState<InstagramExport | null>(null);
-  const [error, setError] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (open) {
-      setStep("connect");
-      setLink("");
-      setBusy(null);
-      setPosts([]);
-      setExported(null);
-      setError("");
-    }
-  }, [open]);
-
-  const fetchLink = async () => {
-    setBusy("Fetching the post…");
-    setError("");
-    try {
-      const parsed = parseInstagramUrl(link);
-      if (!parsed) throw new Error("Paste a public Instagram post link, like instagram.com/p/…");
-      const post = await fetchInstagramPost({ data: { url: link } });
-      setPosts([{ ...post, id: post.shortcode, imageUrl: post.thumbnail, selected: true }]);
-      setStep("select");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't load that post.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const loadExport = async (file: File) => {
-    setBusy("Reading your export…");
-    setError("");
-    try {
-      const result = await readInstagramExportFile(file);
-      setExported(result);
-      setPosts(result.posts);
-      setStep("select");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't read that file.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const importSelected = async () => {
-    const chosen = posts.filter((post) => post.selected !== false);
-    if (chosen.length === 0) return;
-    setBusy(`Importing 0/${chosen.length}…`);
-    setError("");
-    let imported = 0;
-    const failures: string[] = [];
-
-    for (const [index, post] of chosen.entries()) {
-      setBusy(`Importing ${index + 1}/${chosen.length}…`);
-      try {
-        let images: string[] = [];
-        if (post.imagePath && exported) {
-          const media = exported.readMedia(post.imagePath);
-          if (media) images = [await nostr.uploadMedia(media.bytes, media.mime)];
-        } else if (post.imageUrl) {
-          try {
-            const remote = await fetchRemoteImage({ data: { url: post.imageUrl } });
-            images = [await nostr.uploadMedia(base64ToBytes(remote.base64), remote.mime)];
-          } catch {
-            // Instagram may block the media fetch; publish the caption anyway.
-          }
-        }
-
-        const content = [
-          post.caption.trim(),
-          post.permalink ? `Originally posted on Instagram: ${post.permalink}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-        if (!content.trim()) continue;
-
-        const tags: string[][] = [["t", "instagram-import"]];
-        if (post.permalink) tags.push(["r", post.permalink]);
-        await nostr.publish({ content, images, tags, createdAt: post.createdAt });
-        imported += 1;
-      } catch (err) {
-        failures.push(err instanceof Error ? err.message : "unknown error");
-      }
-    }
-
-    setBusy(null);
-    if (imported === 0) {
-      setError(failures[0] ?? "Nothing could be imported.");
-      return;
-    }
-    if (failures.length) {
-      toast.error(`${imported} imported, ${failures.length} failed.`);
-    } else {
-      toast.success(`${imported} posts imported to Nostr`);
-    }
-    setStep("done");
-  };
-
-  const selectedCount = posts.filter((post) => post.selected !== false).length;
-
-  return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-[560px]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Camera className="size-5 text-fuchsia-500" />
-            Import from Instagram
-          </DialogTitle>
-          <DialogDescription>
-            Bring your posts over to Nostr. Captions are re-published as events signed by your key,
-            and images are re-hosted on Blossom.
-          </DialogDescription>
-        </DialogHeader>
-
-        {step === "connect" && (
-          <div className="space-y-3">
-            {IS_STATIC_HOSTING ? (
-              <p className="rounded-xl bg-zinc-50 p-3 text-[11.5px] leading-relaxed text-zinc-500 ring-1 ring-zinc-100">
-                This hosted version runs entirely in your browser, so it can't fetch an Instagram
-                link. Download your Instagram data export and upload it below — captions and photos
-                are imported locally.
-              </p>
-            ) : (
-              <>
-                <Field label="Link to a public post" hint="We fetch the caption and cover image.">
-                  <input
-                    value={link}
-                    onChange={(e) => setLink(e.target.value)}
-                    placeholder="https://www.instagram.com/p/…"
-                    className={inputCls}
-                  />
-                </Field>
-                <GhostBtn
-                  className="w-full"
-                  disabled={!link.trim() || !!busy}
-                  onClick={() => void fetchLink()}
-                >
-                  {busy ? (
-                    <>
-                      <Loader2 className="size-4 animate-spin" /> {busy}
-                    </>
-                  ) : (
-                    <>
-                      Fetch post <ArrowRight className="size-4" />
-                    </>
-                  )}
-                </GhostBtn>
-
-                <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-zinc-400">
-                  <span className="h-px flex-1 bg-zinc-200" /> or{" "}
-                  <span className="h-px flex-1 bg-zinc-200" />
-                </div>
-              </>
-            )}
-
-            <div className="flex items-center justify-between rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-100">
-              <div>
-                <p className="text-[12.5px] font-semibold text-zinc-800">
-                  Upload your Instagram export
-                </p>
-                <p className="text-[11px] text-zinc-500">
-                  Settings → Your activity → Download your information (JSON)
-                </p>
-              </div>
-              <GhostBtn disabled={!!busy} onClick={() => fileRef.current?.click()}>
-                {busy ? <Loader2 className="size-4 animate-spin" /> : "Upload .zip"}
-              </GhostBtn>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".zip,.json,application/zip,application/json"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (file) void loadExport(file);
-                }}
-              />
-            </div>
-
-            {error && (
-              <p className="rounded-lg bg-rose-50 p-2.5 text-[11.5px] text-rose-700 ring-1 ring-rose-100">
-                {error}
-              </p>
-            )}
-
-            <GhostBtn className="w-full" onClick={onClose}>
-              Skip for now
-            </GhostBtn>
-          </div>
-        )}
-
-        {step === "select" && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-[12.5px] font-semibold text-zinc-800">Select posts to import</p>
-              <div className="flex gap-2 text-[11.5px] font-semibold text-brand">
-                <button onClick={() => setPosts((p) => p.map((x) => ({ ...x, selected: true })))}>
-                  All
-                </button>
-                <span className="text-zinc-300">·</span>
-                <button onClick={() => setPosts((p) => p.map((x) => ({ ...x, selected: false })))}>
-                  None
-                </button>
-              </div>
-            </div>
-            <ul className="max-h-[300px] space-y-1.5 overflow-auto pr-1">
-              {posts.map((post) => {
-                const on = post.selected !== false;
-                const preview = post.imageUrl;
-                return (
-                  <li key={post.id}>
-                    <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-white p-2.5 ring-1 ring-zinc-100 hover:bg-zinc-50">
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        onChange={(e) =>
-                          setPosts((all) =>
-                            all.map((x) =>
-                              x.id === post.id ? { ...x, selected: e.target.checked } : x,
-                            ),
-                          )
-                        }
-                        className="size-4 accent-brand"
-                      />
-                      {preview ? (
-                        <img
-                          src={preview}
-                          alt=""
-                          className="size-10 shrink-0 rounded-lg object-cover"
-                        />
-                      ) : (
-                        <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-fuchsia-400 via-orange-300 to-amber-300 text-white">
-                          <Camera className="size-4" />
-                        </div>
-                      )}
-                      <p className="flex-1 truncate text-[12.5px] text-zinc-800">
-                        {post.caption || "Untitled post"}
-                      </p>
-                      <span className="text-[10.5px] text-zinc-400">IG</span>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="flex items-center gap-2 rounded-lg bg-blue-50 p-2.5 text-[11.5px] text-blue-800 ring-1 ring-blue-100">
-              <ShieldCheck className="size-3.5" />
-              Original captions & media are re-published as Nostr events signed by your key.
-            </div>
-            {error && <p className="text-[11.5px] text-rose-600">{error}</p>}
-            <div className="flex gap-2">
-              <GhostBtn className="flex-1" disabled={!!busy} onClick={() => setStep("connect")}>
-                Back
-              </GhostBtn>
-              <PrimaryBtn
-                className="flex-1"
-                disabled={!!busy || selectedCount === 0}
-                onClick={() => void importSelected()}
-              >
-                {busy ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" /> {busy}
-                  </>
-                ) : (
-                  `Import ${selectedCount}`
-                )}
-              </PrimaryBtn>
-            </div>
-          </div>
-        )}
-
-        {step === "done" && (
-          <div className="space-y-3 text-center">
-            <div className="mx-auto grid size-14 place-items-center rounded-2xl bg-emerald-100 text-emerald-600">
-              <Check className="size-7" />
-            </div>
-            <p className="text-[14px] font-semibold text-zinc-900">All set</p>
-            <p className="text-[12.5px] text-zinc-500">
-              Your posts have been published to your relays. Followers can now discover them on
-              Nostr.
-            </p>
-            <PrimaryBtn className="w-full" onClick={onClose}>
-              Done
-            </PrimaryBtn>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
   );
 }
 

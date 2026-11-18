@@ -42,35 +42,56 @@ export const CREATOR_PASS_CONFIGURED = Boolean(
 export type CardOnramp = {
   id: "cashapp" | "moonpay" | "spark";
   label: string;
+  description: string;
   href: string;
+  /** Cash App pays the existing invoice, so it needs one first. */
+  needsInvoice?: boolean;
 };
 
 /**
- * Fiat on-ramps for fans who don't hold sats yet. Cash App can open straight
- * into a Lightning payment once an invoice exists; MoonPay and Spark take a
- * merchant/widget URL from the Crays account, configured at build time.
+ * Fiat on-ramps for creators who don't hold sats yet. This mirrors the Breez
+ * Spark SDK's "buy bitcoin" flow: the provider returns a URL to open in the
+ * browser (or the Cash App app), and the purchase arrives over Lightning.
+ *
+ * The full SDK widget needs a Breez API key and a native/server runtime, so the
+ * static web build deep-links the providers instead:
+ * - Cash App gets the BOLT-11 invoice itself, which lets it fund the payment
+ *   from a card or Cash App balance (an amountless invoice would only allow
+ *   paying from an existing BTC balance).
+ * - MoonPay opens its buy page with the USD amount prefilled. Replace the URL
+ *   with an SDK-generated `buy_bitcoin` link to enable Apple Pay / Google Pay
+ *   checkout for the Crays account.
+ * - Spark opens the Spark wallet, where the user can buy Bitcoin and then pay
+ *   the same invoice.
  */
-export function cardOnramps(invoice?: string): CardOnramp[] {
+export function cardOnramps(invoice?: string, usd = CREATOR_PASS_USD): CardOnramp[] {
   const env = import.meta.env;
   const cashAppOverride = (env.VITE_CRAYS_CASHAPP_URL as string | undefined)?.trim();
   const moonpay = (env.VITE_CRAYS_MOONPAY_URL as string | undefined)?.trim();
   const spark = (env.VITE_CRAYS_SPARK_URL as string | undefined)?.trim();
+  const moonpayPrefill = `https://www.moonpay.com/buy/btc?baseCurrencyAmount=${Math.round(
+    usd,
+  )}&baseCurrencyCode=usd&defaultCurrencyCode=btc`;
   return [
     {
       id: "cashapp",
       label: "Cash App",
+      description: "Pay this invoice from your Cash App balance or a debit card.",
       href:
         cashAppOverride ||
         (invoice ? `https://cash.app/launch/lightning/${invoice}` : "https://cash.app/"),
+      needsInvoice: !cashAppOverride,
     },
     {
       id: "moonpay",
       label: "MoonPay",
-      href: moonpay || "https://www.moonpay.com/buy/btc",
+      description: "Buy Bitcoin with Apple Pay, Google Pay or a card.",
+      href: moonpay || moonpayPrefill,
     },
     {
       id: "spark",
       label: "Spark",
+      description: "Buy Bitcoin in Spark, then pay the same invoice.",
       href: spark || "https://spark.money",
     },
   ];

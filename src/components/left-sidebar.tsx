@@ -10,7 +10,6 @@ import {
   Wallet,
   User,
   Settings,
-  Camera,
   LogIn,
   LogOut,
 } from "lucide-react";
@@ -94,20 +93,6 @@ export function LeftSidebar() {
             </Link>
           );
         })}
-
-        {/* Import — only meaningful once you have a key to sign the posts */}
-        {nostr.account && (
-          <button
-            onClick={ui.openImportInstagram}
-            className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100/80 hover:text-zinc-900"
-          >
-            <Camera
-              className="size-[18px] shrink-0 text-zinc-400 group-hover:text-zinc-700"
-              strokeWidth={2}
-            />
-            Import from Instagram
-          </button>
-        )}
       </nav>
 
       {/* Auth CTA / Account chip */}
