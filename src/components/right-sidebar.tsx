@@ -1,7 +1,7 @@
 import { Search, TrendingUp, Camera, ArrowUpRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { AvatarTile } from "./avatar-tile";
 import { useUI } from "./modals/ui-provider";
 import { useNostr } from "./nostr-provider";
@@ -108,19 +108,27 @@ export function RightSidebar() {
               const isFollowed = followed[profile.pubkey] ?? nostr.isFollowing(profile.pubkey);
               return (
                 <li key={profile.pubkey} className="flex items-center gap-3">
-                  {profile.picture ? (
-                    <img
-                      src={profile.picture}
-                      alt=""
-                      className="size-9 rounded-full object-cover"
-                    />
-                  ) : (
-                    <AvatarTile seed={name} size={36} />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-semibold text-zinc-900">{name}</p>
-                    <p className="truncate text-[11px] text-zinc-400">{profile.handle}</p>
-                  </div>
+                  <Link
+                    to="/profile"
+                    search={{ pubkey: profile.pubkey }}
+                    className="group flex min-w-0 flex-1 items-center gap-3"
+                  >
+                    {profile.picture ? (
+                      <img
+                        src={profile.picture}
+                        alt=""
+                        className="size-9 shrink-0 rounded-full object-cover"
+                      />
+                    ) : (
+                      <AvatarTile seed={name} size={36} />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-semibold text-zinc-900 group-hover:underline">
+                        {name}
+                      </p>
+                      <p className="truncate text-[11px] text-zinc-400">{profile.handle}</p>
+                    </div>
+                  </Link>
                   <button
                     onClick={async () => {
                       if (!ui.requireAuth("follow creators")) return;

@@ -37,6 +37,35 @@ const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|svg)(\?|#|$)/i;
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const BASE64_BLOB = /^[A-Za-z0-9+/]{80,}={0,2}$/;
 const HEX_BLOB = /^[0-9a-f]{80,}$/i;
+/** Hosts that serve images from extension-less URLs (Blossom, nostr.build, …). */
+const MEDIA_HOSTS = [
+  "nostr.build",
+  "image.nostr.build",
+  "nostrcheck.me",
+  "imgur.com",
+  "imgur.io",
+  "i.ibb.co",
+  "catbox.moe",
+  "pbs.twimg.com",
+  "cdn.discordapp.com",
+  "media.tenor.com",
+  "images.unsplash.com",
+];
+
+function looksLikeImage(url: string) {
+  if (IMAGE_EXT.test(url)) return true;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host.includes("blossom")) return true;
+    return MEDIA_HOSTS.some((media) => host === media || host.endsWith(`.${media}`));
+  } catch {
+    return false;
+  }
+}
+
+function trimUrl(url: string) {
+  return url.replace(/[),.!?]+$/, "");
+}
 
 /** Drop obvious relay spam: long single-token base64/hex blobs and JSON payloads. */
 function looksLikeSpam(content: string) {
@@ -69,18 +98,45 @@ export function parseImages(event: NostrEvent): string[] {
   const urls: string[] = [];
   for (const tag of event.tags) {
     if (tag[0] === "imeta") {
-      for (const part of tag.slice(1)) {
-        if (part.startsWith("url ")) urls.push(part.slice(4).trim());
-      }
+      const url = tag
+        .slice(1)
+        .find((part) => part.startsWith("url "))
+        ?.slice(4)
+        .trim();
+      const mime = tag
+        .slice(1)
+        .find((part) => part.startsWith("m "))
+        ?.slice(2)
+        .trim();
+      if (url && (!mime || mime.startsWith("image/"))) urls.push(url);
     }
-    if (tag[0] === "r" && tag[1]) urls.push(tag[1]);
+    if (tag[0] === "image" && tag[1]) urls.push(tag[1]);
+    if (tag[0] === "r" && tag[1] && looksLikeImage(tag[1])) urls.push(tag[1]);
   }
   for (const match of event.content.match(URL_RE) ?? []) {
-    urls.push(match.replace(/[),.!?]+$/, ""));
+    const url = trimUrl(match);
+    if (looksLikeImage(url)) urls.push(url);
   }
   const unique = Array.from(new Set(urls)).filter((url) => /^https?:\/\//i.test(url));
-  const images = unique.filter((url) => IMAGE_EXT.test(url));
-  return images.slice(0, 4);
+  return unique.slice(0, 8);
+}
+
+/**
+ * Remove media URLs from note text so feed cards show an image instead of a
+ * bare link. Non-image links are kept so they can render as clickable anchors.
+ */
+export function contentWithoutImages(content: string, images: string[] = []): string {
+  const rendered = new Set(images);
+  return content
+    .replace(URL_RE, (match) => {
+      const url = trimUrl(match);
+      if (rendered.has(url) || looksLikeImage(url)) return "";
+      return match;
+    })
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 
 export function noteIsReply(event: NostrEvent) {

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageShell } from "@/components/page-shell";
 import { AvatarTile } from "@/components/avatar-tile";
@@ -212,19 +212,27 @@ function Discover() {
                 const isFollowed = nostr.isFollowing(profile.pubkey);
                 return (
                   <li key={profile.pubkey} className="flex items-center gap-3">
-                    {profile.picture ? (
-                      <img
-                        src={profile.picture}
-                        alt=""
-                        className="size-10 rounded-full object-cover"
-                      />
-                    ) : (
-                      <AvatarTile seed={name} size={40} />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-semibold text-zinc-900">{name}</p>
-                      <p className="truncate text-[11px] text-zinc-400">{profile.handle}</p>
-                    </div>
+                    <Link
+                      to="/profile"
+                      search={{ pubkey: profile.pubkey }}
+                      className="group flex min-w-0 flex-1 items-center gap-3"
+                    >
+                      {profile.picture ? (
+                        <img
+                          src={profile.picture}
+                          alt=""
+                          className="size-10 shrink-0 rounded-full object-cover"
+                        />
+                      ) : (
+                        <AvatarTile seed={name} size={40} />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-semibold text-zinc-900 group-hover:underline">
+                          {name}
+                        </p>
+                        <p className="truncate text-[11px] text-zinc-400">{profile.handle}</p>
+                      </div>
+                    </Link>
                     <button
                       onClick={async () => {
                         if (!ui.requireAuth("follow creators")) return;

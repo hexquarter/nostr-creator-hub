@@ -6,6 +6,7 @@ import { PostCard, postFromNote } from "@/components/post-card";
 import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
 import { fetchFeed, fetchProfileStats, type FeedNote } from "@/lib/nostr/social";
+import { emptyProfile, fetchProfile, normalizePubkey, type Profile } from "@/lib/nostr/profiles";
 import { compactNumber } from "@/lib/format";
 import {
   BadgeCheck,
@@ -18,14 +19,20 @@ import {
   Loader2,
   LogIn,
   Copy,
+  UserPlus,
+  UserCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/profile")({
+  validateSearch: (search: Record<string, unknown>): { pubkey?: string } => ({
+    pubkey:
+      typeof search.pubkey === "string" ? (normalizePubkey(search.pubkey) ?? undefined) : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Profile — Crays" },
-      { name: "description", content: "Your Crays profile — posts, articles, media and zaps." },
+      { name: "description", content: "A Crays profile — posts, articles, media and zaps." },
     ],
   }),
   component: Profile,
@@ -43,7 +50,8 @@ function Profile() {
   const ui = useUI();
   const nostr = useNostr();
   const account = nostr.account;
-  const profile = account?.profile;
+  const search = Route.useSearch();
+  const [viewed, setViewed] = useState<{ pubkey: string; profile: Profile } | null>(null);
   const [notes, setNotes] = useState<FeedNote[]>([]);
   const [stats, setStats] = useState<{
     posts: number;
@@ -53,7 +61,37 @@ function Profile() {
   const [tab, setTab] = useState<Tab>("posts");
   const [loading, setLoading] = useState(false);
 
-  const pubkey = account?.pubkey;
+  const pubkey = search.pubkey ?? account?.pubkey;
+  const isOwn = Boolean(account && pubkey === account.pubkey);
+  const profile = pubkey
+    ? viewed?.pubkey === pubkey
+      ? viewed.profile
+      : isOwn
+        ? (account?.profile ?? emptyProfile(pubkey))
+        : emptyProfile(pubkey)
+    : undefined;
+
+  useEffect(() => {
+    if (!pubkey) {
+      setViewed(null);
+      return;
+    }
+    if (isOwn) {
+      setViewed(account?.profile ? { pubkey, profile: account.profile } : null);
+      return;
+    }
+    let active = true;
+    fetchProfile(pubkey)
+      .then((next) => {
+        if (active) setViewed({ pubkey, profile: next });
+      })
+      .catch(() => {
+        // Keep the fallback identity from the pubkey.
+      });
+    return () => {
+      active = false;
+    };
+  }, [pubkey, isOwn, account?.profile]);
 
   const load = useCallback(async () => {
     if (!pubkey) {
@@ -62,6 +100,8 @@ function Profile() {
       return;
     }
     setLoading(true);
+    setNotes([]);
+    setStats(null);
     try {
       const [feed, result] = await Promise.all([
         fetchFeed({ authors: [pubkey], includeReplies: false, limit: 100, timeout: 6500 }),
@@ -87,7 +127,7 @@ function Profile() {
     return notes;
   }, [notes, tab]);
 
-  if (!account) {
+  if (!pubkey) {
     return (
       <PageShell title="Profile" subtitle="Public face of your sovereign identity.">
         <div className="rounded-2xl bg-white p-10 text-center shadow-card ring-1 ring-black/5">
@@ -111,9 +151,21 @@ function Profile() {
     );
   }
 
-  const name = profile?.displayName || profile?.name || account.npub;
+  const name = profile?.displayName || profile?.name || profile?.npub || "";
+  const npub = profile?.npub ?? "";
   const banner = profile?.banner;
   const zapsEarned = notes.reduce((sum, note) => sum + note.counts.zapSats, 0);
+  const following = nostr.isFollowing(pubkey);
+
+  const toggleFollow = async () => {
+    if (!ui.requireAuth("follow creators")) return;
+    try {
+      const next = await nostr.toggleFollow(pubkey);
+      toast.success(next ? `Following ${name}` : `Unfollowed ${name}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't update your follow list.");
+    }
+  };
 
   const statCards = [
     { label: "Posts", value: stats ? compactNumber(stats.posts) : "—" },
@@ -148,17 +200,35 @@ function Profile() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={() => ui.openZap({ recipient: name, pubkey: account.pubkey })}
+                onClick={() => ui.openZap({ recipient: name, pubkey })}
                 className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 hover:bg-amber-100"
               >
                 <Zap className="size-3.5" /> Zap
               </button>
-              <button
-                onClick={ui.openEditProfile}
-                className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-[12px] font-semibold text-zinc-700 shadow-card ring-1 ring-black/5 hover:bg-zinc-50"
-              >
-                <SettingsIcon className="size-3.5" /> Edit profile
-              </button>
+              {isOwn ? (
+                <button
+                  onClick={ui.openEditProfile}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-[12px] font-semibold text-zinc-700 shadow-card ring-1 ring-black/5 hover:bg-zinc-50"
+                >
+                  <SettingsIcon className="size-3.5" /> Edit profile
+                </button>
+              ) : (
+                <button
+                  onClick={() => void toggleFollow()}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12px] font-semibold shadow-card ring-1 transition-colors ${
+                    following
+                      ? "bg-zinc-100 text-zinc-700 ring-black/5 hover:bg-zinc-200"
+                      : "bg-zinc-900 text-white ring-zinc-900 hover:bg-zinc-700"
+                  }`}
+                >
+                  {following ? (
+                    <UserCheck className="size-3.5" />
+                  ) : (
+                    <UserPlus className="size-3.5" />
+                  )}
+                  {following ? "Following" : "Follow"}
+                </button>
+              )}
             </div>
           </div>
 
@@ -169,12 +239,12 @@ function Profile() {
             </h2>
             <button
               onClick={() => {
-                void navigator.clipboard.writeText(account.npub);
+                void navigator.clipboard.writeText(npub);
                 toast.success("npub copied");
               }}
               className="inline-flex items-center gap-1 text-[12px] text-zinc-500 hover:text-zinc-800"
             >
-              {account.npub.slice(0, 18)}…{account.npub.slice(-6)}
+              {npub.slice(0, 18)}…{npub.slice(-6)}
               <Copy className="size-3" />
             </button>
             {profile?.about && (
@@ -211,7 +281,8 @@ function Profile() {
                 </li>
               )}
               <li className="inline-flex items-center gap-1.5">
-                <MapPin className="size-3.5" /> Nostr · {account.method}
+                <MapPin className="size-3.5" /> Nostr
+                {isOwn && account ? ` · ${account.method}` : ""}
               </li>
             </ul>
           </div>
@@ -249,7 +320,8 @@ function Profile() {
 
       {loading ? (
         <p className="flex items-center justify-center gap-2 py-10 text-[12.5px] text-zinc-400">
-          <Loader2 className="size-4 animate-spin" /> Reading your notes from relays…
+          <Loader2 className="size-4 animate-spin" /> Reading {isOwn ? "your" : "their"} notes from
+          relays…
         </p>
       ) : visible.length === 0 ? (
         <div className="rounded-2xl bg-white p-10 text-center shadow-card ring-1 ring-black/5">
@@ -259,15 +331,19 @@ function Profile() {
           <p className="mt-3 text-[14px] font-semibold text-zinc-900">Nothing here yet</p>
           <p className="mx-auto mt-1 max-w-sm text-[12.5px] text-zinc-500">
             {tab === "posts"
-              ? "Your notes will appear here once you publish something."
+              ? isOwn
+                ? "Your notes will appear here once you publish something."
+                : "This creator hasn't published any notes yet."
               : "Nothing in this tab yet."}
           </p>
-          <button
-            onClick={() => ui.openCompose({ mode: "post" })}
-            className="mt-4 rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black"
-          >
-            Write a post
-          </button>
+          {isOwn && (
+            <button
+              onClick={() => ui.openCompose({ mode: "post" })}
+              className="mt-4 rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black"
+            >
+              Write a post
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-5">
