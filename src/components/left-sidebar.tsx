@@ -164,7 +164,7 @@ function JoinCraysSidebarCard() {
 
   return (
     <div className="px-1 pb-1 pt-2">
-      <div className="rounded-2xl bg-gradient-to-br from-brand/10 via-white to-amber-50 p-3.5 shadow-card ring-1 ring-brand/15">
+      <div className="rounded-2xl p-3.5">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-brand">Join Crays</p>
         <p className="mt-1.5 text-[13.5px] font-semibold leading-snug text-zinc-900">
           Join the creators live on Nostr
