@@ -36,14 +36,14 @@ export const Route = createFileRoute("/")({
 
 type Tab = "for-you" | "following";
 const TABS: { id: Tab; label: string }[] = [
-  { id: "for-you", label: "For you" },
   { id: "following", label: "Following" },
+  { id: "for-you", label: "For you" }
 ];
 
 function Home() {
   const nostr = useNostr();
   const ui = useUI();
-  const [tab, setTab] = useState<Tab>("for-you");
+  const [tab, setTab] = useState<Tab>("following");
   const [notes, setNotes] = useState<FeedNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
