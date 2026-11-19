@@ -5,10 +5,12 @@
  *   - `404.html`, which Pages serves (with a 404 status) for any URL that has
  *     no prerendered HTML file. It's a standalone page, so it works without the
  *     client bundle.
+ *   - `CNAME`, copied from the repo root when present, so a custom domain stays
+ *     configured across deploys.
  *
  * Only runs for the GitHub Pages build (`GITHUB_PAGES=true`).
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 if (process.env.GITHUB_PAGES !== "true") process.exit(0);
@@ -65,4 +67,18 @@ await mkdir(outDir, { recursive: true });
 await writeFile(join(outDir, ".nojekyll"), "");
 await writeFile(join(outDir, "404.html"), notFound);
 
-console.log(`[gh-pages] wrote .nojekyll and 404.html to ${outDir} (base ${base})`);
+let copiedCname = false;
+try {
+  const cname = await readFile("CNAME", "utf8");
+  const domain = cname.trim();
+  if (domain) {
+    await writeFile(join(outDir, "CNAME"), `${domain}\n`);
+    copiedCname = true;
+  }
+} catch {
+  // No CNAME file in the repo root.
+}
+
+console.log(
+  `[gh-pages] wrote .nojekyll and 404.html${copiedCname ? " and CNAME" : ""} to ${outDir} (base ${base})`,
+);
