@@ -12,8 +12,9 @@ import {
   Settings,
   LogIn,
   LogOut,
+  ArrowRight,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
 import { AvatarTile } from "@/components/avatar-tile";
@@ -76,21 +77,23 @@ export function LeftSidebar() {
           if (authOnly && !nostr.account) return null;
           const active = pathname === to || (to !== "/" && pathname.startsWith(to));
           return (
-            <Link
-              key={to}
-              to={to}
-              className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] font-medium transition-colors ${
-                active
-                  ? "bg-brand/10 text-brand"
-                  : "text-zinc-600 hover:bg-zinc-100/80 hover:text-zinc-900"
-              }`}
-            >
-              <Icon
-                className={`size-[18px] shrink-0 ${active ? "text-brand" : "text-zinc-400 group-hover:text-zinc-700"}`}
-                strokeWidth={2}
-              />
-              {label}
-            </Link>
+            <Fragment key={to}>
+              <Link
+                to={to}
+                className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] font-medium transition-colors ${
+                  active
+                    ? "bg-brand/10 text-brand"
+                    : "text-zinc-600 hover:bg-zinc-100/80 hover:text-zinc-900"
+                }`}
+              >
+                <Icon
+                  className={`size-[18px] shrink-0 ${active ? "text-brand" : "text-zinc-400 group-hover:text-zinc-700"}`}
+                  strokeWidth={2}
+                />
+                {label}
+              </Link>
+              {to === "/discover" && !nostr.account && <JoinCraysSidebarCard />}
+            </Fragment>
           );
         })}
       </nav>
@@ -122,14 +125,7 @@ export function LeftSidebar() {
               <LogOut className="size-4" />
             </button>
           </Link>
-        ) : (
-          <button
-            onClick={() => ui.openAuth()}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-3 py-2.5 text-[13px] font-semibold text-white shadow-brand ring-1 ring-brand/80 transition-all hover:bg-brand/90 hover:shadow-elevated"
-          >
-            <LogIn className="size-4" /> Sign in / Create
-          </button>
-        )}
+        ) : null}
 
         {/* Creator stats */}
         {nostr.account && (
@@ -159,6 +155,31 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</p>
       <p className="text-[13px] font-semibold text-zinc-900">{value}</p>
+    </div>
+  );
+}
+
+function JoinCraysSidebarCard() {
+  const ui = useUI();
+
+  return (
+    <div className="px-1 pb-1 pt-2">
+      <div className="rounded-2xl bg-gradient-to-br from-brand/10 via-white to-amber-50 p-3.5 shadow-card ring-1 ring-brand/15">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-brand">Join Crays</p>
+        <p className="mt-1.5 text-[13.5px] font-semibold leading-snug text-zinc-900">
+          Join the creators live on Nostr
+        </p>
+        <p className="mt-1 text-[11.5px] leading-relaxed text-zinc-600">
+          Follow and support your favorite creators as a subscriber — or start your own page and
+          keep 100% of what you earn.
+        </p>
+        <button
+          onClick={() => ui.openAuth({ intent: "join the creators live on Nostr" })}
+          className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-brand px-3 py-2.5 text-[12.5px] font-semibold text-white shadow-brand transition-colors hover:bg-brand/90"
+        >
+          <LogIn className="size-4" /> Sign in / Create
+        </button>
+      </div>
     </div>
   );
 }

@@ -27,6 +27,7 @@ import { formatUsd } from "@/lib/nostr/price";
 import {
   BadgeCheck,
   Calendar,
+  Camera,
   Check,
   Crown,
   Link as LinkIcon,
@@ -249,7 +250,7 @@ function Profile() {
       {/* Banner + header */}
       <section className="overflow-hidden rounded-2xl bg-white shadow-card ring-1 ring-black/5">
         <div
-          className="h-44 w-full bg-zinc-900 bg-cover bg-center sm:h-56"
+          className="relative h-44 w-full bg-zinc-900 bg-cover bg-center sm:h-56"
           style={
             banner
               ? { backgroundImage: `url(${banner})` }
@@ -258,14 +259,32 @@ function Profile() {
                     "radial-gradient(at 20% 30%, #818cf8 0, transparent 50%), radial-gradient(at 80% 70%, #f472b6 0, transparent 50%), linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%)",
                 }
           }
-        />
+        >
+          {isOwn && (
+            <button
+              onClick={ui.openEditProfile}
+              className="absolute right-4 top-4 inline-flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-sm backdrop-blur transition-colors hover:bg-black/70"
+            >
+              <Camera className="size-3.5" /> Change banner
+            </button>
+          )}
+        </div>
         <div className="-mt-14 px-5 pb-6 sm:px-8">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <div className="w-fit rounded-2xl bg-white p-1.5 shadow-card">
+            <div className="relative w-fit rounded-2xl bg-white p-1.5 shadow-card">
               {profile?.picture ? (
                 <img src={profile.picture} alt="" className="size-24 rounded-xl object-cover" />
               ) : (
                 <AvatarTile seed={name} size={96} rounded="2xl" className="!rounded-xl" />
+              )}
+              {isOwn && (
+                <button
+                  onClick={ui.openEditProfile}
+                  aria-label="Change profile picture"
+                  className="absolute -bottom-1 -right-1 grid size-8 place-items-center rounded-full bg-zinc-900 text-white shadow ring-2 ring-white transition-colors hover:bg-black"
+                >
+                  <Camera className="size-4" />
+                </button>
               )}
             </div>
             <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">

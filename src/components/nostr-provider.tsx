@@ -462,6 +462,8 @@ export function NostrProvider({ children }: { children: ReactNode }) {
         "sign_event:10003",
         "sign_event:30023",
         "sign_event:30078",
+        // Required for Blossom uploads (avatar, banner and post media).
+        "sign_event:24242",
         "nip04_encrypt",
         "nip04_decrypt",
         "nip44_encrypt",
@@ -524,17 +526,27 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     async (patch: Partial<Profile>) => {
       if (!account) throw new Error("Sign in first.");
       const signer = requireSigner();
+      // Relays order kind-0 metadata by created_at. Nudge it forward when two
+      // updates happen within the same second (e.g. avatar, then banner).
+      const createdAt = Math.max(
+        Math.floor(Date.now() / 1000),
+        (account.profile.createdAt ?? 0) + 1,
+      );
       const merged = { ...account.profile, ...patch };
       const event = await signer.signEvent({
         kind: 0,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: createdAt,
         content: profileMetadataTemplate(merged),
         tags: [],
       });
       await publishEvent(event);
-      await refreshProfile();
+      // Show the change immediately instead of waiting for relays to echo the
+      // event back — otherwise the old avatar/banner appears to "stick".
+      setAccount((current) =>
+        current ? { ...current, profile: { ...merged, createdAt, event } } : current,
+      );
     },
-    [account, refreshProfile, requireSigner],
+    [account, requireSigner],
   );
 
   const publish = useCallback(

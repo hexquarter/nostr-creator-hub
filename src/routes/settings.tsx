@@ -237,7 +237,13 @@ function Settings() {
                   onClick={() => ui.openEditProfile()}
                   className="rounded-lg bg-zinc-900 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-black"
                 >
-                  <Camera className="mr-1 inline size-3.5" /> Edit picture
+                  <Camera className="mr-1 inline size-3.5" /> Edit photo
+                </button>
+                <button
+                  onClick={() => ui.openEditProfile()}
+                  className="rounded-lg bg-zinc-100 px-3.5 py-2 text-[12px] font-semibold text-zinc-700 hover:bg-zinc-200"
+                >
+                  Change banner
                 </button>
                 <button
                   onClick={() => void save()}

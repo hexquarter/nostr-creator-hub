@@ -2113,20 +2113,79 @@ function EditProfileModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [displayName, setDisplayName] = useState("");
   const [about, setAbout] = useState("");
   const [picture, setPicture] = useState("");
+  const [banner, setBanner] = useState("");
   const [website, setWebsite] = useState("");
   const [lud16, setLud16] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState<"picture" | "banner" | null>(null);
+  const pictureInputRef = useRef<HTMLInputElement>(null);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
+  const initializedRef = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      initializedRef.current = false;
+      return;
+    }
+    // Only seed the form when the dialog opens. A profile refresh (for example
+    // right after an upload) must not wipe unsaved text edits.
+    if (initializedRef.current) return;
+    initializedRef.current = true;
     setName(profile?.name ?? "");
     setDisplayName(profile?.displayName ?? "");
     setAbout(profile?.about ?? "");
     setPicture(profile?.picture ?? "");
+    setBanner(profile?.banner ?? "");
     setWebsite(profile?.website ?? "");
     setLud16(profile?.lud16 ?? "");
     setBusy(false);
   }, [open, profile]);
+
+  const uploadImage = async (file: File | undefined, target: "picture" | "banner") => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error(`${file.name} isn't an image.`);
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("Please choose an image under 10 MB.");
+      return;
+    }
+    setUploading(target);
+    try {
+      const url = await nostr.uploadFile(file);
+      if (target === "picture") {
+        await nostr.updateProfile({ picture: url });
+        setPicture(url);
+      } else {
+        await nostr.updateProfile({ banner: url });
+        setBanner(url);
+      }
+      toast.success(target === "picture" ? "Profile picture updated" : "Profile banner updated");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't upload that image.");
+    } finally {
+      setUploading(null);
+    }
+  };
+
+  const removeImage = async (target: "picture" | "banner") => {
+    setBusy(true);
+    try {
+      if (target === "picture") {
+        await nostr.updateProfile({ picture: "" });
+        setPicture("");
+      } else {
+        await nostr.updateProfile({ banner: "" });
+        setBanner("");
+      }
+      toast.success(target === "picture" ? "Profile picture removed" : "Profile banner removed");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't remove that image.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const save = async () => {
     setBusy(true);
@@ -2136,6 +2195,7 @@ function EditProfileModal({ open, onClose }: { open: boolean; onClose: () => voi
         displayName: displayName.trim() || name.trim(),
         about: about.trim(),
         picture: picture.trim(),
+        banner: banner.trim(),
         website: website.trim(),
         lud16: lud16.trim(),
       });
@@ -2150,31 +2210,157 @@ function EditProfileModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-[520px]">
+      <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>Edit profile</DialogTitle>
           <DialogDescription>
-            Published as a kind-0 metadata event signed by your key.
+            Image uploads publish immediately. Other changes are saved as a kind-0 event when you
+            click Save.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            {picture ? (
-              <img src={picture} alt="" className="size-16 rounded-full object-cover" />
-            ) : (
-              <AvatarTile seed={displayName || name || nostr.account?.npub || "Crays"} size={64} />
-            )}
-            <div className="flex-1">
-              <Field label="Avatar URL">
-                <input
-                  value={picture}
-                  onChange={(e) => setPicture(e.target.value)}
-                  placeholder="https://…"
-                  className={inputCls}
-                />
-              </Field>
+          <div className="rounded-xl bg-zinc-50 p-3 ring-1 ring-black/5">
+            <div className="flex items-center gap-3">
+              <div className="relative shrink-0">
+                {picture ? (
+                  <img src={picture} alt="" className="size-16 rounded-full object-cover" />
+                ) : (
+                  <AvatarTile
+                    seed={displayName || name || nostr.account?.npub || "Crays"}
+                    size={64}
+                  />
+                )}
+                <button
+                  type="button"
+                  aria-label="Upload profile picture"
+                  onClick={() => pictureInputRef.current?.click()}
+                  className="absolute -bottom-1 -right-1 grid size-7 place-items-center rounded-full bg-zinc-900 text-white shadow ring-2 ring-white hover:bg-black"
+                >
+                  {uploading === "picture" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <ImageIcon className="size-3.5" />
+                  )}
+                </button>
+              </div>
+              <div className="min-w-0 flex-1">
+                <Field label="Profile picture">
+                  <input
+                    value={picture}
+                    onChange={(e) => setPicture(e.target.value)}
+                    placeholder="Paste an image URL or upload below"
+                    className={inputCls}
+                  />
+                </Field>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => pictureInputRef.current?.click()}
+                    disabled={uploading === "picture"}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11.5px] font-semibold text-zinc-700 shadow-sm ring-1 ring-black/5 hover:bg-zinc-100 disabled:opacity-50"
+                  >
+                    {uploading === "picture" ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <ImageIcon className="size-3.5" />
+                    )}
+                    {uploading === "picture" ? "Uploading…" : "Upload image"}
+                  </button>
+                  {picture && (
+                    <button
+                      type="button"
+                      onClick={() => void removeImage("picture")}
+                      disabled={busy || uploading !== null}
+                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                    >
+                      <X className="size-3.5" /> Remove
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
+            <input
+              ref={pictureInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                void uploadImage(e.target.files?.[0], "picture");
+                e.target.value = "";
+              }}
+            />
           </div>
+
+          <div className="rounded-xl bg-zinc-50 p-3 ring-1 ring-black/5">
+            <div
+              className="relative mb-2 h-24 overflow-hidden rounded-lg bg-cover bg-center"
+              style={
+                banner
+                  ? { backgroundImage: `url(${banner})` }
+                  : {
+                      background:
+                        "radial-gradient(at 20% 30%, #818cf8 0, transparent 55%), radial-gradient(at 80% 70%, #f472b6 0, transparent 55%), linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%)",
+                    }
+              }
+            >
+              <button
+                type="button"
+                onClick={() => bannerInputRef.current?.click()}
+                className="absolute bottom-2 right-2 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1.5 text-[11px] font-semibold text-white backdrop-blur transition-colors hover:bg-black/75"
+              >
+                {uploading === "banner" ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <ImageIcon className="size-3" />
+                )}
+                {uploading === "banner" ? "Uploading…" : "Change banner"}
+              </button>
+            </div>
+            <Field label="Profile banner">
+              <input
+                value={banner}
+                onChange={(e) => setBanner(e.target.value)}
+                placeholder="Paste an image URL or upload below"
+                className={inputCls}
+              />
+            </Field>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => bannerInputRef.current?.click()}
+                disabled={uploading === "banner"}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11.5px] font-semibold text-zinc-700 shadow-sm ring-1 ring-black/5 hover:bg-zinc-100 disabled:opacity-50"
+              >
+                {uploading === "banner" ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <ImageIcon className="size-3.5" />
+                )}
+                {uploading === "banner" ? "Uploading…" : "Upload banner"}
+              </button>
+              {banner && (
+                <button
+                  type="button"
+                  onClick={() => void removeImage("banner")}
+                  disabled={busy || uploading !== null}
+                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                >
+                  <X className="size-3.5" /> Remove
+                </button>
+              )}
+            </div>
+            <input
+              ref={bannerInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                void uploadImage(e.target.files?.[0], "banner");
+                e.target.value = "";
+              }}
+            />
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <Field label="Display name">
               <input
@@ -2221,9 +2407,9 @@ function EditProfileModal({ open, onClose }: { open: boolean; onClose: () => voi
         </div>
         <DialogFooter>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
-          <PrimaryBtn disabled={busy} onClick={() => void save()}>
-            {busy ? <Loader2 className="size-4 animate-spin" /> : null}
-            {busy ? "Publishing…" : "Save"}
+          <PrimaryBtn disabled={busy || uploading !== null} onClick={() => void save()}>
+            {busy || uploading ? <Loader2 className="size-4 animate-spin" /> : null}
+            {uploading ? "Uploading…" : busy ? "Publishing…" : "Save"}
           </PrimaryBtn>
         </DialogFooter>
       </DialogContent>

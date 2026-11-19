@@ -1,10 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2, Search, Sparkles } from "lucide-react";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { RightSidebar } from "@/components/right-sidebar";
 import { Composer } from "@/components/composer";
-import { CreatorToolsHero } from "@/components/creator-tools-hero";
 import { FeaturedCreators } from "@/components/featured-creators";
 import { PostCard, postFromNote } from "@/components/post-card";
 import { MobileNav } from "@/components/mobile-nav";
@@ -108,15 +107,27 @@ function Home() {
 
         <main className="min-w-0 space-y-6 pb-28 lg:py-6 lg:pb-6">
           <MobileTopBar />
+          <div className="hidden lg:block">
+            <button
+              onClick={ui.openCommandPalette}
+              className="relative flex w-full items-center gap-2 rounded-xl bg-white py-2.5 pl-10 pr-3 text-left text-[13px] text-zinc-400 shadow-card ring-1 ring-black/5 transition-colors hover:bg-zinc-50"
+            >
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+              <span className="flex-1">Search creators, posts, topics…</span>
+              <kbd className="hidden rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 sm:inline">
+                ⌘K
+              </kbd>
+            </button>
+          </div>
 
           <header className="hidden items-end justify-between lg:flex">
             <div>
               <h1 className="text-[26px] font-semibold leading-none tracking-tight text-zinc-900">
-                {signedOut ? "Crays for creators" : "Home"}
+                {signedOut ? "Home" : "Home"}
               </h1>
               <p className="mt-1.5 text-[13px] text-zinc-500">
                 {signedOut
-                  ? "Keep 100% of your earnings. Your link-in-bio, subscriptions and dashboard — no 20% platform cut."
+                  ? "Discover creators and live posts from across Nostr."
                   : tab === "following"
                     ? "Only posts from the creators you follow — no algorithm in the way."
                     : "Live from the Nostr relays, as it happens."}
@@ -145,8 +156,6 @@ function Home() {
             )}
           </header>
 
-          {signedOut && <CreatorToolsHero />}
-
           <FeaturedCreators profiles={creators} />
 
           {!signedOut && (
@@ -156,22 +165,10 @@ function Home() {
           )}
 
           {signedOut && (
-            <div className="flex items-end justify-between">
-              <div>
-                <h2 className="text-[17px] font-semibold tracking-tight text-zinc-900">
-                  Creators live on Nostr
-                </h2>
-                <p className="mt-1 text-[12.5px] text-zinc-500">
-                  Explore the public feed — no account needed to read. Create your page to start
-                  earning with 0% platform fees.
-                </p>
-              </div>
-              <button
-                onClick={() => ui.openAuth({ intent: "create your Crays creator page" })}
-                className="rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black"
-              >
-                Create your page
-              </button>
+            <div>
+              <h2 className="text-[17px] font-semibold tracking-tight text-zinc-900">
+                Creators live on Nostr
+              </h2>
             </div>
           )}
 
