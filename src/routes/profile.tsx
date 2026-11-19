@@ -420,96 +420,145 @@ function Profile() {
       </section>
 
       {showMembership && (
-        <section className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 sm:p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <h3 className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
-                <Crown className="size-3.5" /> Creator membership
-              </h3>
-              <p className="mt-1.5 text-[15px] font-semibold text-zinc-900">
-                {hasBadgeProgram
-                  ? `Members-only posts from ${name}`
-                  : "Turn your audience into members"}
-              </p>
-              <p className="mt-1 max-w-xl text-[12.5px] leading-relaxed text-zinc-500">
-                {hasBadgeProgram
-                  ? `A membership unlocks every members-only post from ${name} for ${BADGE_DAYS} days, or readers can unlock one post at a time. Fans pay with Apple Pay or credit card — no wallet needed. Lightning and zaps are available in advanced mode.`
-                  : "Publish a members-only post to start your membership. Fans can subscribe with Apple Pay or card, or unlock a single post."}
-              </p>
+        <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-900 to-amber-950 p-5 text-white shadow-card ring-1 ring-white/10 sm:p-6">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -right-20 -top-24 size-72 rounded-full bg-amber-500/20 blur-3xl"
+          />
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -bottom-24 -left-16 size-64 rounded-full bg-brand/20 blur-3xl"
+          />
+
+          <div className="relative">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-200 ring-1 ring-white/15">
+                    <Crown className="size-3" /> Creator membership
+                  </span>
+                  {!isOwn && ownedBadge && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-400/30">
+                      <Check className="size-3" /> Member
+                    </span>
+                  )}
+                  {isOwn && hasBadgeProgram && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-400/30">
+                      <Check className="size-3" /> Live
+                    </span>
+                  )}
+                </div>
+
+                <h3 className="mt-4 text-balance text-[22px] font-semibold leading-tight tracking-tight sm:text-[26px]">
+                  {hasBadgeProgram
+                    ? isOwn
+                      ? "Your membership is ready for fans."
+                      : `Unlock members-only posts from ${name}.`
+                    : "Turn your audience into members"}
+                </h3>
+                <p className="mt-2 max-w-2xl text-[12.5px] leading-relaxed text-zinc-300">
+                  {hasBadgeProgram
+                    ? `A membership unlocks every members-only post from ${name} for ${BADGE_DAYS} days, or fans can unlock a single post. They pay with Apple Pay or card — no wallet needed. Lightning and zaps are available in advanced mode.`
+                    : "Publish a members-only post to start your membership. Fans can subscribe with Apple Pay or card, or unlock a single post — no crypto or wallet needed."}
+                </p>
+
+                <div className="mt-4 flex flex-wrap items-end gap-x-4 gap-y-1">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                      Monthly membership
+                    </p>
+                    <p className="mt-0.5 text-[24px] font-bold leading-none tracking-tight text-amber-100">
+                      {hasBadgeProgram ? priceLabel(badgePrice) : "Not set"}
+                    </p>
+                  </div>
+                  {unlockPrice != null && (
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                        Single post
+                      </p>
+                      <p className="mt-0.5 text-[18px] font-semibold leading-none tracking-tight text-zinc-100">
+                        {priceLabel(unlockPrice)}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center">
+                  {!isOwn && hasBadgeProgram && !ownedBadge && (
+                    <button
+                      onClick={() => ui.openBadge({ creator: pubkey, name, sats: badgePrice })}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-5 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-amber-400"
+                    >
+                      <Crown className="size-4" /> Join with card · {priceLabel(badgePrice)}
+                    </button>
+                  )}
+                  {!isOwn && ownedBadge && (
+                    <span className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-400/15 px-4 py-3 text-[13px] font-semibold text-emerald-300 ring-1 ring-emerald-400/30">
+                      <Check className="size-4" /> Member · {daysLeft(ownedBadge)} days left
+                    </span>
+                  )}
+                  {isOwn && hasBadgeProgram && (
+                    <button
+                      onClick={() => ui.openCompose({ mode: "post" })}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-5 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-amber-400"
+                    >
+                      <Crown className="size-4" /> Write members-only post
+                    </button>
+                  )}
+                  {isOwn && !hasBadgeProgram && (
+                    <button
+                      onClick={() => {
+                        if (!hasCreatorPass) {
+                          ui.openUpgrade();
+                          return;
+                        }
+                        ui.openCompose({ mode: "post" });
+                      }}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-5 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-amber-400"
+                    >
+                      {hasCreatorPass ? <Crown className="size-4" /> : <Lock className="size-4" />}
+                      {hasCreatorPass ? "Start your membership" : "Get Crays premium"}
+                    </button>
+                  )}
+                </div>
+
+                {!isOwn && hasBadgeProgram && (
+                  <p className="mt-3 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-zinc-400">
+                    <Users className="mt-0.5 size-3.5 shrink-0 text-zinc-500" />
+                    {ownedBadge
+                      ? `Your membership covers all ${premiumCount} members-only post${premiumCount === 1 ? "" : "s"} from ${name}.`
+                      : `A membership unlocks all ${premiumCount} members-only post${premiumCount === 1 ? "" : "s"} from ${name} for ${BADGE_DAYS} days. Or pay once for a single post.`}
+                  </p>
+                )}
+                {isOwn && !hasCreatorPass && (
+                  <p className="mt-3 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-zinc-400">
+                    <Lock className="mt-0.5 size-3.5 shrink-0 text-zinc-500" /> Crays premium (
+                    {formatUsd(CREATOR_PASS_USD)} / month) is required to sell memberships and
+                    single-post unlocks.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid w-full shrink-0 grid-cols-2 gap-2 rounded-2xl bg-white/5 p-3 ring-1 ring-white/10 sm:grid-cols-4 lg:w-[340px] lg:grid-cols-2 lg:self-stretch">
+                <MembershipStat
+                  label="Monthly price"
+                  value={hasBadgeProgram ? priceLabel(badgePrice) : "Not set"}
+                />
+                <MembershipStat
+                  label="Per-post unlock"
+                  value={unlockPrice == null ? "Not set" : priceLabel(unlockPrice)}
+                />
+                <MembershipStat
+                  label="Members"
+                  value={memberCount == null ? "—" : compactNumber(memberCount)}
+                />
+                <MembershipStat
+                  label="Members-only posts"
+                  value={hasBadgeProgram ? compactNumber(premiumCount) : "—"}
+                />
+              </div>
             </div>
-
-            {!isOwn && hasBadgeProgram && !ownedBadge && (
-              <button
-                onClick={() => ui.openBadge({ creator: pubkey, name, sats: badgePrice })}
-                className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600 sm:w-auto"
-              >
-                <Crown className="size-4" /> Join with card · {priceLabel(badgePrice)}
-              </button>
-            )}
-            {!isOwn && ownedBadge && (
-              <span className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-emerald-50 px-4 py-2.5 text-[12.5px] font-semibold text-emerald-700 ring-1 ring-emerald-100 sm:w-auto">
-                <Check className="size-4" /> Member · {daysLeft(ownedBadge)} days left
-              </span>
-            )}
-            {isOwn && hasBadgeProgram && (
-              <button
-                onClick={() => ui.openCompose({ mode: "post" })}
-                className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600 sm:w-auto"
-              >
-                <Crown className="size-4" /> Write members-only post
-              </button>
-            )}
-            {isOwn && !hasBadgeProgram && (
-              <button
-                onClick={() => {
-                  if (!hasCreatorPass) {
-                    ui.openUpgrade();
-                    return;
-                  }
-                  ui.openCompose({ mode: "post" });
-                }}
-                className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600 sm:w-auto"
-              >
-                {hasCreatorPass ? <Crown className="size-4" /> : <Lock className="size-4" />}
-                {hasCreatorPass ? "Start your membership" : "Get Crays premium"}
-              </button>
-            )}
           </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <MembershipStat
-              label="Monthly price"
-              value={hasBadgeProgram ? `${compactNumber(badgePrice)} sats` : "Not set"}
-            />
-            <MembershipStat
-              label="Per-post unlock"
-              value={unlockPrice == null ? "Not set" : `${compactNumber(unlockPrice)} sats`}
-            />
-            <MembershipStat
-              label="Members"
-              value={memberCount == null ? "—" : compactNumber(memberCount)}
-            />
-            <MembershipStat
-              label="Members-only posts"
-              value={hasBadgeProgram ? compactNumber(premiumCount) : "—"}
-            />
-          </div>
-
-          {!isOwn && hasBadgeProgram && (
-            <p className="mt-3 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-zinc-500">
-              <Users className="mt-0.5 size-3.5 shrink-0" />
-              {ownedBadge
-                ? `Your membership covers all ${premiumCount} members-only post${premiumCount === 1 ? "" : "s"} from ${name}.`
-                : `A membership unlocks all ${premiumCount} members-only post${premiumCount === 1 ? "" : "s"} from ${name} for ${BADGE_DAYS} days. Or pay once for a single post.`}
-            </p>
-          )}
-          {isOwn && !hasCreatorPass && (
-            <p className="mt-3 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-zinc-500">
-              <Lock className="mt-0.5 size-3.5 shrink-0" /> Crays premium (
-              {formatUsd(CREATOR_PASS_USD)} / month) is required to sell memberships and single-post
-              unlocks.
-            </p>
-          )}
         </section>
       )}
 
@@ -568,11 +617,9 @@ function Profile() {
 
 function MembershipStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl bg-zinc-50 px-3.5 py-2.5 ring-1 ring-zinc-100">
-      <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</p>
-      <p className="mt-0.5 truncate text-[14px] font-semibold tracking-tight text-zinc-900">
-        {value}
-      </p>
+    <div className="rounded-xl bg-white/5 px-3.5 py-2.5 ring-1 ring-white/10">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-white/45">{label}</p>
+      <p className="mt-0.5 truncate text-[14px] font-semibold tracking-tight text-white">{value}</p>
     </div>
   );
 }
