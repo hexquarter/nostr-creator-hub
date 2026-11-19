@@ -108,7 +108,8 @@ export function loadMoonPayOrder(orderId: string): PendingMoonPayOrder | null {
     if (!isOrder(parsed)) return null;
     if (Date.now() - parsed.createdAt > MAX_AGE_MS) {
       window.localStorage.removeItem(orderKey(orderId));
-      window.localStorage.removeItem(indexKey(parsed.buyerPubkey));
+      const index = window.localStorage.getItem(indexKey(parsed.buyerPubkey));
+      if (index === orderId) window.localStorage.removeItem(indexKey(parsed.buyerPubkey));
       return null;
     }
     return parsed;
