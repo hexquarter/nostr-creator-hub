@@ -4,10 +4,27 @@ import {
   getEventHash,
   nip44,
   verifyEvent,
+  type Filter,
   type NostrEvent,
 } from "nostr-tools";
-import { publishEvent, queryEvents } from "./relays";
+import { getRelayList, normalizeRelayUrl, pool, publishEvent, queryEvents } from "./relays";
 import type { AppSigner } from "./signer";
+
+const DM_RELAY_FALLBACKS = [
+  "wss://relay.primal.net",
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://relay.nostr.band",
+  "wss://relay.snort.social",
+  "wss://purplepag.es",
+  "wss://relay.nostr.net",
+  "wss://inbox.nostr.wine",
+  "wss://relay.0xchat.com",
+  "wss://nostr.oxtr.dev",
+  "wss://auth.nostr1.com",
+  "wss://relay.getalby.com/v1",
+  "wss://relay.nostr.bg",
+];
 
 export type DirectMessage = {
   id: string;
@@ -33,6 +50,85 @@ function firstTag(event: { tags?: string[][] }, name: string) {
 
 function pTags(event: { tags?: string[][] }): string[] {
   return (event.tags ?? []).filter((tag) => tag[0] === "p" && tag[1]).map((tag) => tag[1]);
+}
+
+async function queryAll(relays: string[], filter: Filter, timeout: number): Promise<NostrEvent[]> {
+  const unique = Array.from(
+    new Set(
+      relays
+        .map((relay) => normalizeRelayUrl(relay) ?? relay)
+        .filter((relay): relay is string => Boolean(relay)),
+    ),
+  );
+  if (unique.length === 0) return [];
+
+  const anyPool = pool as unknown as {
+    querySync?: (
+      relays: string[],
+      filter: Filter,
+      params?: { maxWait?: number },
+    ) => Promise<NostrEvent[]>;
+  };
+  if (typeof anyPool.querySync === "function") {
+    try {
+      const events = await anyPool.querySync(unique, filter, { maxWait: timeout + 1000 });
+      const list = Array.isArray(events) ? events : [];
+      const seen = new Set<string>();
+      const out: NostrEvent[] = [];
+      for (const event of list) {
+        if (event && typeof event.id === "string" && !seen.has(event.id)) {
+          seen.add(event.id);
+          out.push(event);
+        }
+      }
+      return out;
+    } catch {
+      // fall through to per-relay queries
+    }
+  }
+
+  const results = await Promise.all(
+    unique.map((relay) =>
+      queryEvents(filter, { relays: [relay], timeout, fresh: true }).catch(
+        () => [] as NostrEvent[],
+      ),
+    ),
+  );
+  const seen = new Set<string>();
+  const out: NostrEvent[] = [];
+  for (const list of results) {
+    for (const event of list) {
+      if (!seen.has(event.id)) {
+        seen.add(event.id);
+        out.push(event);
+      }
+    }
+  }
+  return out;
+}
+
+async function discoverDmRelays(pubkey: string): Promise<string[]> {
+  const sources = Array.from(new Set([...getRelayList(), ...DM_RELAY_FALLBACKS]));
+  try {
+    const events = await queryAll(sources, { kinds: [10050], authors: [pubkey], limit: 1 }, 4500);
+    const event = [...events].sort((a, b) => b.created_at - a.created_at)[0];
+    if (!event) return [];
+    const relays: string[] = [];
+    for (const tag of event.tags) {
+      if (tag[0] === "relay" && tag[1]) {
+        const url = normalizeRelayUrl(tag[1]);
+        if (url) relays.push(url);
+      }
+    }
+    return relays;
+  } catch {
+    return [];
+  }
+}
+
+async function dmInboxRelays(pubkey: string): Promise<string[]> {
+  const discovered = await discoverDmRelays(pubkey);
+  return Array.from(new Set([...getRelayList(), ...discovered, ...DM_RELAY_FALLBACKS]));
 }
 
 function randomCreatedAt() {
@@ -120,7 +216,15 @@ async function sendNip17(
     }),
   );
 
-  const results = await Promise.allSettled(wraps.map((wrap) => publishEvent(wrap)));
+  const [myInboxRelays, recipientInboxRelays] = await Promise.all([
+    discoverDmRelays(myPubkey).catch(() => [] as string[]),
+    discoverDmRelays(recipient).catch(() => [] as string[]),
+  ]);
+  const publishRelays = Array.from(
+    new Set([...getRelayList(), ...myInboxRelays, ...recipientInboxRelays, ...DM_RELAY_FALLBACKS]),
+  );
+
+  const results = await Promise.allSettled(wraps.map((wrap) => publishEvent(wrap, publishRelays)));
   const delivered = results.some((result) => result.status === "fulfilled");
   if (!delivered) {
     throw new Error("Couldn't deliver the message to any relay.");
@@ -143,14 +247,17 @@ export async function fetchDirectMessages(
     throw new Error("Your signer doesn't support encrypted messages.");
   }
 
+  const inboxRelays = await dmInboxRelays(pubkey);
+
   const messages: DirectMessage[] = [];
   const seen = new Set<string>();
 
   if (canNip17) {
     try {
-      const wraps = await queryEvents(
-        { kinds: [1059], "#p": [pubkey], limit: 400 },
-        { timeout: 7000 },
+      const wraps = await queryAll(
+        inboxRelays,
+        { kinds: [1059], "#p": [pubkey], limit: 500 },
+        7000,
       );
       for (const wrap of wraps) {
         if (seen.has(wrap.id)) continue;
@@ -186,8 +293,8 @@ export async function fetchDirectMessages(
   if (canNip04) {
     try {
       const [incoming, outgoing] = await Promise.all([
-        queryEvents({ kinds: [4], "#p": [pubkey], limit: 200 }, { timeout: 6500 }),
-        queryEvents({ kinds: [4], authors: [pubkey], limit: 200 }, { timeout: 6500 }),
+        queryAll(inboxRelays, { kinds: [4], "#p": [pubkey], limit: 300 }, 6500),
+        queryAll(inboxRelays, { kinds: [4], authors: [pubkey], limit: 300 }, 6500),
       ]);
 
       const events: NostrEvent[] = [];
