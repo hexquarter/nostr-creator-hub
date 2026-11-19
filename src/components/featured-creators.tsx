@@ -38,7 +38,7 @@ export function FeaturedCreators({ profiles }: { profiles: Profile[] }) {
               </div>
             </div>
             <p className="max-w-[64px] truncate text-[10.5px] font-medium text-zinc-600 group-hover:text-zinc-900">
-              {profile.handle || name}
+              {name}
             </p>
           </Link>
         );

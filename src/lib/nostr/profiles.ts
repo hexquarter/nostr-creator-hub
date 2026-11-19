@@ -182,6 +182,8 @@ export async function fetchProfiles(
   const map = new Map<string, Profile>();
   if (unique.length === 0) return map;
 
+  const baseRelays = relays ?? getRelayList();
+
   // Relays sometimes cap `authors`; chunk to stay friendly.
   const chunks: string[][] = [];
   for (let i = 0; i < unique.length; i += 80) chunks.push(unique.slice(i, i + 80));
@@ -189,7 +191,10 @@ export async function fetchProfiles(
   const events = (
     await Promise.all(
       chunks.map((authors) =>
-        queryEvents({ kinds: [0], authors, limit: authors.length * 2 }, { relays, timeout: 4500 }),
+        queryEvents(
+          { kinds: [0], authors, limit: authors.length * 2 },
+          { relays: baseRelays, timeout: 4500 },
+        ),
       ),
     )
   ).flat();
@@ -202,6 +207,33 @@ export async function fetchProfiles(
   for (const pubkey of unique) {
     if (newest.has(pubkey)) map.set(pubkey, profileFromEvent(newest.get(pubkey)!));
   }
+
+  const missing = unique.filter((pubkey) => !map.has(pubkey));
+  if (missing.length > 0) {
+    const discoveryRelays = Array.from(new Set([...baseRelays, ...PROFILE_DISCOVERY_RELAYS]));
+    const discoveryChunks: string[][] = [];
+    for (let i = 0; i < missing.length; i += 80) {
+      discoveryChunks.push(missing.slice(i, i + 80));
+    }
+    const discoveredEvents = (
+      await Promise.all(
+        discoveryChunks.map((authors) =>
+          queryEvents(
+            { kinds: [0], authors, limit: authors.length * 2 },
+            { relays: discoveryRelays, timeout: 5000, fresh: true },
+          ),
+        ),
+      )
+    ).flat();
+    for (const event of discoveredEvents) {
+      const current = newest.get(event.pubkey);
+      if (!current || event.created_at > current.created_at) newest.set(event.pubkey, event);
+    }
+    for (const pubkey of missing) {
+      if (newest.has(pubkey)) map.set(pubkey, profileFromEvent(newest.get(pubkey)!));
+    }
+  }
+
   return map;
 }
 
