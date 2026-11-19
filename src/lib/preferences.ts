@@ -12,9 +12,15 @@ export type PrivacyPreferences = {
   hideSpam: boolean;
 };
 
+export type PaymentPreferences = {
+  /** Show Lightning / zap checkout instead of the default card-first flow. */
+  advanced: boolean;
+};
+
 export type Preferences = {
   notifications: NotificationPreferences;
   privacy: PrivacyPreferences;
+  payments: PaymentPreferences;
 };
 
 const STORAGE_KEY = "crays.preferences.v1";
@@ -22,6 +28,7 @@ const STORAGE_KEY = "crays.preferences.v1";
 const DEFAULTS: Preferences = {
   notifications: { zaps: true, replies: true, reactions: true, reposts: true },
   privacy: { showSensitive: false, hideSpam: true },
+  payments: { advanced: false },
 };
 
 let cache: Preferences | null = null;
@@ -35,6 +42,7 @@ function merge(base: Preferences, patch: Partial<Preferences>): Preferences {
   return {
     notifications: { ...base.notifications, ...patch.notifications },
     privacy: { ...base.privacy, ...patch.privacy },
+    payments: { ...base.payments, ...patch.payments },
   };
 }
 

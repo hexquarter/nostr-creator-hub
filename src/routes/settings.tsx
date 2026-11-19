@@ -13,6 +13,8 @@ import {
   Eye,
   Loader2,
   Camera,
+  CreditCard,
+  FlaskConical,
   Zap,
   RefreshCw,
 } from "lucide-react";
@@ -21,6 +23,14 @@ import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
 import { getCustomRelays, getRelayList, invalidateQueries, removeRelay } from "@/lib/nostr/relays";
 import { usePreferences, setPreferences } from "@/lib/preferences";
+import {
+  DEV_PAYMENTS_ENABLED,
+  clearSimulatedPremiumAccess,
+  setDevPaymentSettings,
+  simulatePremiumAccess,
+  useDevPaymentSettings,
+} from "@/lib/payments/dev-payments";
+import { creatorPassDaysLeft, isCreatorPassActive, useCreatorPass } from "@/lib/nostr/creator-pass";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/settings")({
@@ -38,6 +48,7 @@ export const Route = createFileRoute("/settings")({
 
 const sections = [
   { id: "account", icon: User, label: "Account", desc: "Display name, handle, bio" },
+  { id: "payments", icon: CreditCard, label: "Payments", desc: "Card or Lightning checkout" },
   { id: "keys", icon: Key, label: "Keys & identity", desc: "Backup and rotate keys" },
   { id: "relays", icon: Server, label: "Relays", desc: "Where your posts live" },
   { id: "wallet", icon: Wallet, label: "Wallet", desc: "Lightning address & payouts" },
@@ -49,6 +60,8 @@ function Settings() {
   const ui = useUI();
   const nostr = useNostr();
   const preferences = usePreferences();
+  const devSettings = useDevPaymentSettings();
+  const creatorPass = useCreatorPass();
   const profile = nostr.account?.profile;
   const [relays, setRelays] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -290,6 +303,115 @@ function Settings() {
                 />
               </div>
             </div>
+          </Panel>
+
+          {/* Payments */}
+          <Panel
+            id="payments"
+            title="Payments"
+            desc="Choose how checkout looks when you buy memberships or unlock posts."
+          >
+            <ul className="divide-y divide-zinc-100">
+              <PrefRow
+                title="Advanced Lightning mode"
+                desc="Use Lightning invoices, Nostr Wallet Connect and zaps instead of the default Apple Pay / card checkout."
+                on={preferences.payments.advanced}
+                onToggle={() =>
+                  setPreferences({
+                    payments: {
+                      ...preferences.payments,
+                      advanced: !preferences.payments.advanced,
+                    },
+                  })
+                }
+              />
+            </ul>
+            <div className="mt-4 rounded-xl bg-gradient-to-br from-zinc-50 to-amber-50/60 p-4 ring-1 ring-black/5">
+              <p className="text-[12.5px] font-semibold text-zinc-900">
+                Apple Pay or credit card for everyone
+              </p>
+              <p className="mt-1 text-[11.5px] leading-relaxed text-zinc-500">
+                Fans don't need Bitcoin or a wallet: MoonPay takes Apple Pay, Google Pay or a card,
+                then the creator is paid over Lightning. Advanced mode keeps Lightning and zaps
+                available for Bitcoin-native fans.
+              </p>
+            </div>
+
+            {DEV_PAYMENTS_ENABLED && (
+              <div className="mt-4 rounded-xl border border-dashed border-emerald-300 bg-emerald-50/60 p-4">
+                <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-emerald-800">
+                  <FlaskConical className="size-3.5" /> Developer tools
+                </p>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-zinc-600">
+                  These controls only appear in <code>vite dev</code>, or in a build made with{" "}
+                  <code>VITE_CRAYS_DEV_PAYMENTS=true</code>.
+                </p>
+
+                <div className="mt-3 divide-y divide-emerald-100 rounded-lg bg-white/70 px-3">
+                  <PrefRow
+                    title="Disable Lightning payments"
+                    desc="Hide invoices, NWC and zaps in checkout so you can test the card-first flow only."
+                    on={devSettings.disableLightning}
+                    onToggle={() =>
+                      setDevPaymentSettings({ disableLightning: !devSettings.disableLightning })
+                    }
+                  />
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {nostr.account ? (
+                    <>
+                      <button
+                        onClick={() => {
+                          try {
+                            const pass = simulatePremiumAccess();
+                            toast.success(
+                              `Premium activated locally — ${creatorPassDaysLeft(pass)} days (dev)`,
+                            );
+                          } catch (error) {
+                            toast.error(
+                              error instanceof Error
+                                ? error.message
+                                : "Couldn't simulate premium access.",
+                            );
+                          }
+                        }}
+                        className="rounded-lg bg-emerald-700 px-3 py-2 text-[12px] font-semibold text-white hover:bg-emerald-800"
+                      >
+                        Simulate premium access
+                      </button>
+                      <button
+                        onClick={() => {
+                          try {
+                            clearSimulatedPremiumAccess();
+                            toast.success("Local premium access cleared (dev)");
+                          } catch (error) {
+                            toast.error(
+                              error instanceof Error
+                                ? error.message
+                                : "Couldn't clear simulated premium access.",
+                            );
+                          }
+                        }}
+                        disabled={!creatorPass}
+                        className="rounded-lg bg-white px-3 py-2 text-[12px] font-semibold text-emerald-800 ring-1 ring-emerald-200 hover:bg-emerald-50 disabled:opacity-50"
+                      >
+                        Clear simulated access
+                      </button>
+                      <span className="text-[11px] text-emerald-800">
+                        {creatorPass && isCreatorPassActive(creatorPass)
+                          ? `Active · ${creatorPassDaysLeft(creatorPass)} days left`
+                          : "No local premium access"}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-[11.5px] text-zinc-600">
+                      Sign in to simulate premium access for your account.
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </Panel>
 
           {/* Keys */}

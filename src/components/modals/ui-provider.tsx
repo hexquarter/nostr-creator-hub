@@ -10,7 +10,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
-import type { NostrEvent } from "nostr-tools";
+import type { EventTemplate, NostrEvent } from "nostr-tools";
 import { useNostr } from "@/components/nostr-provider";
 import type { Profile } from "@/lib/nostr/profiles";
 import {
@@ -48,6 +48,30 @@ import {
 import { hasPasskey, hasWebAuthn } from "@/lib/nostr/passkey";
 import { useBtcPrice, satsToUsd, usdToSats, formatUsd } from "@/lib/nostr/price";
 import { isLightningInvoice, requestPaymentDetails, requestPaymentInvoice } from "@/lib/nostr/zaps";
+import {
+  BREEZ_MOONPAY_CONFIGURED,
+  breezErrorMessage,
+  fundingSatsFor,
+} from "@/lib/payments/breez-wallet";
+import {
+  MoonPayPendingError,
+  completeMoonPayOrder,
+  consumeMoonPayReturn,
+  getPendingMoonPayOrder,
+  hasOtherMoonPayDriver,
+  loadMoonPayOrder,
+  runMoonPayOrder,
+  startMoonPayOrder,
+  type MoonPayProgress,
+  type PendingMoonPayOrder,
+} from "@/lib/payments/moonpay-checkout";
+import { usePreferences } from "@/lib/preferences";
+import {
+  DEV_PAYMENTS_ENABLED,
+  lightningPaymentsDisabled,
+  simulatePremiumAccess,
+  useDevPaymentSettings,
+} from "@/lib/payments/dev-payments";
 import {
   Dialog,
   DialogContent,
@@ -148,6 +172,7 @@ type BadgeOptions = {
   mode?: "subscribe" | "post";
 };
 type ShareOptions = { url?: string; title?: string };
+type CardPhase = "idle" | "preparing" | MoonPayProgress | "ready" | "done" | "error";
 type ComposeOptions = {
   mode?: "post" | "article" | "poll" | "reply";
   replyTo?: string;
@@ -173,6 +198,38 @@ export type AuthUser = {
   picture?: string;
 };
 type AuthOptions = { intent?: string };
+
+type SignAndPublish = (template: EventTemplate) => Promise<NostrEvent>;
+
+const MOONPAY_PROGRESS: Record<MoonPayProgress, string> = {
+  "waiting-funds": "Waiting for your card payment to arrive…",
+  "creating-invoice": "Preparing the creator's Lightning invoice…",
+  paying: "Paying the creator over Lightning…",
+  verifying: "Confirming your unlock…",
+};
+
+/** Activate a membership or single-post unlock after a MoonPay purchase. */
+function grantMoonPayPurchase(order: PendingMoonPayOrder, signAndPublish: SignAndPublish) {
+  if (order.mode === "post" && order.postId) {
+    grantPostUnlock({ postId: order.postId, creator: order.creator, sats: order.sats });
+    void announcePostUnlock({
+      postId: order.postId,
+      creator: order.creator,
+      sats: order.sats,
+      signAndPublish,
+    }).catch(() => undefined);
+    return "Post unlocked — card payment confirmed";
+  }
+
+  const badge = grantCreatorBadge(order.creator, order.sats);
+  void announceCreatorBadge({
+    creator: order.creator,
+    sats: order.sats,
+    expiresAt: badge.expiresAt,
+    signAndPublish,
+  }).catch(() => undefined);
+  return `Membership active — ${daysLeft(badge)} days of members-only posts`;
+}
 
 type UICtx = {
   user: AuthUser | null;
@@ -210,7 +267,7 @@ export function useUI() {
 
 // ---------- Provider ----------
 export function UIProvider({ children }: { children: ReactNode }) {
-  const { account, signOut: nostrSignOut } = useNostr();
+  const { account, restoring, signAndPublish, signOut: nostrSignOut } = useNostr();
   const [auth, setAuth] = useState<AuthOptions | null>(null);
 
   const [zap, setZap] = useState<ZapOptions | null>(null);
@@ -231,6 +288,82 @@ export function UIProvider({ children }: { children: ReactNode }) {
   const [cmd, setCmd] = useState(false);
   const [imagePicker, setImagePicker] = useState(false);
   const [pollBuilder, setPollBuilder] = useState(false);
+
+  // MoonPay redirects back with the order id. Finish the purchase by waiting
+  // for the card funds, paying the creator's invoice, and unlocking locally.
+  const moonpayResume = useRef<string | null>(null);
+  useEffect(() => {
+    if (restoring || !account?.pubkey) return;
+
+    const returnedOrderId = consumeMoonPayReturn();
+    const pending = returnedOrderId
+      ? loadMoonPayOrder(returnedOrderId)
+      : getPendingMoonPayOrder(account.pubkey);
+
+    if (!pending) return;
+    if (pending.buyerPubkey !== account.pubkey) {
+      toast.error("Sign in with the same account that started checkout to finish unlocking.");
+      return;
+    }
+    // Without a return marker, only finish orders whose payment we already
+    // sent. Fresh orders wait for the MoonPay redirect instead of polling on
+    // every page load.
+    if (!returnedOrderId && pending.status !== "paid" && pending.status !== "paying") return;
+    if (moonpayResume.current === pending.orderId) return;
+    moonpayResume.current = pending.orderId;
+
+    const toastId = `moonpay-${pending.orderId}`;
+    toast.loading(MOONPAY_PROGRESS["waiting-funds"], { id: toastId });
+
+    void (async () => {
+      try {
+        if (await hasOtherMoonPayDriver(pending.orderId)) {
+          toast.info(
+            "Payment received in another tab. Finish unlocking in the Crays tab where you started checkout.",
+            { id: toastId },
+          );
+          return;
+        }
+        const result = await runMoonPayOrder(pending, {
+          onProgress: (progress) => toast.loading(MOONPAY_PROGRESS[progress], { id: toastId }),
+        });
+        const granted = await completeMoonPayOrder(result.order, () => {
+          grantMoonPayPurchase(result.order, signAndPublish);
+        });
+        if (!granted) {
+          toast.dismiss(toastId);
+          return;
+        }
+
+        const postPurchase = result.order.mode === "post" && Boolean(result.order.postId);
+        toast.success(
+          postPurchase
+            ? "Post unlocked — card payment confirmed"
+            : "Membership active — card payment confirmed",
+          { id: toastId },
+        );
+        setBadge({
+          creator: result.order.creator,
+          name: result.order.name,
+          sats: result.order.sats,
+          postSats: result.order.postSats,
+          postId: result.order.postId,
+          mode: result.order.mode,
+        });
+      } catch (error) {
+        if (error instanceof MoonPayPendingError) {
+          toast.loading(
+            "Card payment is still arriving. We'll finish unlocking next time you open Crays.",
+            { id: toastId, duration: 8000 },
+          );
+        } else {
+          toast.error(breezErrorMessage(error) || "We couldn't finish that card purchase.", {
+            id: toastId,
+          });
+        }
+      }
+    })();
+  }, [account?.pubkey, restoring, signAndPublish]);
 
   const user = useMemo<AuthUser | null>(() => {
     if (!account) return null;
@@ -385,6 +518,8 @@ function ZapModal({
 }) {
   const nostr = useNostr();
   const price = useBtcPrice();
+  const devSettings = useDevPaymentSettings();
+  const lightningDisabled = DEV_PAYMENTS_ENABLED && devSettings.disableLightning;
   const presets = [21, 100, 500, 1000, 5000, 21000];
   const [amount, setAmount] = useState(500);
   const [note, setNote] = useState("");
@@ -422,6 +557,10 @@ function ZapModal({
   };
 
   const send = async () => {
+    if (lightningDisabled) {
+      toast.error("Lightning payments are disabled in developer mode.");
+      return;
+    }
     if (!profile) {
       toast.error("Open the creator's profile to zap them.");
       return;
@@ -466,6 +605,12 @@ function ZapModal({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
+          {lightningDisabled && (
+            <p className="rounded-lg bg-zinc-100 px-3 py-2 text-[11.5px] text-zinc-600">
+              Lightning is disabled for development. Zaps are unavailable until you turn it back on
+              in Settings → Payments.
+            </p>
+          )}
           <div className="rounded-xl bg-gradient-to-br from-amber-50 to-orange-50 p-5 text-center ring-1 ring-amber-100">
             <p className="text-[10.5px] font-semibold uppercase tracking-wider text-amber-700">
               Amount
@@ -539,11 +684,11 @@ function ZapModal({
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
           <PrimaryBtn
             className="!bg-amber-500 hover:!bg-amber-600"
-            disabled={busy || !profile || !nostr.wallet.connected}
+            disabled={lightningDisabled || busy || !profile || !nostr.wallet.connected}
             onClick={send}
           >
             {busy ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}
-            {busy ? "Sending…" : "Send zap"}
+            {busy ? "Sending…" : lightningDisabled ? "Lightning disabled" : "Send zap"}
           </PrimaryBtn>
         </DialogFooter>
       </DialogContent>
@@ -921,6 +1066,10 @@ function BadgeModal({
   options: BadgeOptions;
 }) {
   const nostr = useNostr();
+  const ui = useUI();
+  const preferences = usePreferences();
+  const devSettings = useDevPaymentSettings();
+  const lightningDisabled = DEV_PAYMENTS_ENABLED && devSettings.disableLightning;
   const btc = useBtcPrice();
   const badges = useCreatorBadges();
   const unlocks = usePostUnlocks();
@@ -932,6 +1081,13 @@ function BadgeModal({
   const [invoice, setInvoice] = useState("");
   const [verifyUrl, setVerifyUrl] = useState("");
   const [creatingInvoice, setCreatingInvoice] = useState(false);
+  const [checkoutMethod, setCheckoutMethod] = useState<"card" | "lightning">(
+    lightningDisabled || !preferences.payments.advanced ? "card" : "lightning",
+  );
+  const [openingCard, setOpeningCard] = useState(false);
+  const [moonPay, setMoonPay] = useState<{ order: PendingMoonPayOrder; url: string } | null>(null);
+  const [moonPayPhase, setMoonPayPhase] = useState<CardPhase>("idle");
+  const [moonPayError, setMoonPayError] = useState("");
 
   const creator = options.creator;
   const subscriptionSats = options.sats ?? DEFAULT_BADGE_SATS;
@@ -957,8 +1113,13 @@ function BadgeModal({
     setInvoice("");
     setVerifyUrl("");
     setCreatingInvoice(false);
+    setOpeningCard(false);
+    setMoonPay(null);
+    setMoonPayPhase("idle");
+    setMoonPayError("");
+    setCheckoutMethod(lightningDisabled || !preferences.payments.advanced ? "card" : "lightning");
     setMode(options.mode ?? (options.postId ? "post" : "subscribe"));
-  }, [open, options.mode, options.postId]);
+  }, [open, options.mode, options.postId, preferences.payments.advanced, lightningDisabled]);
 
   useEffect(() => {
     if (!open || !creator) {
@@ -1065,7 +1226,92 @@ function BadgeModal({
     }
   };
 
+  const finishCardOrder = async (order: PendingMoonPayOrder) => {
+    setMoonPayPhase("waiting-funds");
+    setMoonPayError("");
+    try {
+      const result = await runMoonPayOrder(order, {
+        // On-chain Bitcoin can take a while to confirm. Keep the checkout
+        // alive long enough for the deposit to land, then pay the invoice.
+        timeoutMs: 10 * 60 * 1000,
+        onProgress: (progress) => setMoonPayPhase(progress),
+      });
+      await completeMoonPayOrder(result.order, () => {
+        grantMoonPayPurchase(result.order, nostr.signAndPublish);
+      });
+      setMoonPayPhase("done");
+    } catch (error) {
+      if (error instanceof MoonPayPendingError) {
+        setMoonPayPhase("ready");
+        setMoonPayError(
+          "Your card payment is still arriving. Keep this window open, or come back later — we'll unlock it automatically.",
+        );
+        return;
+      }
+      setMoonPayPhase("error");
+      setMoonPayError(breezErrorMessage(error));
+    }
+  };
+
+  const payWithCard = async () => {
+    if (!creator || !nostr.account?.pubkey) {
+      toast.error("Sign in to buy this content.");
+      return;
+    }
+    if (!BREEZ_MOONPAY_CONFIGURED) {
+      toast.error("Card checkout isn't connected yet. Switch to Lightning in advanced mode.");
+      return;
+    }
+    if (moonPay) {
+      void finishCardOrder(moonPay.order);
+      return;
+    }
+
+    setOpeningCard(true);
+    setMoonPayPhase("preparing");
+    setMoonPayError("");
+    const mobile = typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+
+    try {
+      const { order, url } = await startMoonPayOrder({
+        buyerPubkey: nostr.account.pubkey,
+        creator,
+        name,
+        mode: buyingPost ? "post" : "subscribe",
+        sats,
+        postSats: options.postSats,
+        postId: options.postId,
+        amountUsd: satsToUsd(fundingSatsFor(sats), btc),
+      });
+      setMoonPay({ order, url });
+      setMoonPayPhase("ready");
+      setOpeningCard(false);
+
+      if (mobile) {
+        // Recommended MoonPay UX on mobile: same-tab redirect. The return URL
+        // resumes this order from local storage on the way back.
+        window.location.assign(url);
+      } else {
+        // Desktop: show the URL as a QR code and poll while the fan pays with
+        // Apple Pay or a card on their phone. They can also open MoonPay here.
+        void finishCardOrder(order);
+      }
+    } catch (error) {
+      setMoonPayPhase("error");
+      setMoonPayError(breezErrorMessage(error));
+      setOpeningCard(false);
+    }
+  };
+
   const primary = async () => {
+    if (lightningDisabled && checkoutMethod === "lightning") {
+      setCheckoutMethod("card");
+      return;
+    }
+    if (checkoutMethod === "card") {
+      await payWithCard();
+      return;
+    }
     if (invoice) {
       // Only wallets without LUD-21 need a manual confirmation; otherwise the
       // poll below unlocks the moment the invoice settles.
@@ -1189,11 +1435,14 @@ function BadgeModal({
                   {buyingPost ? "Single post · forever" : `Membership · ${BADGE_DAYS} days`}
                 </p>
                 <p className="mt-1 text-[32px] font-bold tracking-tight text-zinc-900">
-                  {sats.toLocaleString()} sats
+                  {checkoutMethod === "card" && usd != null
+                    ? formatUsd(usd)
+                    : `${sats.toLocaleString()} sats`}
                 </p>
                 <p className="text-[11.5px] text-zinc-500">
-                  {usd != null ? `≈ ${formatUsd(usd)} · ` : ""}paid directly to {name} over
-                  Lightning
+                  {checkoutMethod === "card"
+                    ? `${sats.toLocaleString()} sats · Apple Pay or credit card · no wallet needed`
+                    : `${usd != null ? `≈ ${formatUsd(usd)} · ` : ""}paid directly to ${name} over Lightning`}
                 </p>
                 {!buyingPost && members != null && members > 0 && (
                   <p className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-white/70 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800">
@@ -1202,6 +1451,44 @@ function BadgeModal({
                   </p>
                 )}
               </div>
+
+              <div
+                className={`grid gap-1 rounded-xl bg-zinc-100 p-1 text-[12px] font-semibold ${
+                  lightningDisabled ? "grid-cols-1" : "grid-cols-2"
+                }`}
+              >
+                <button
+                  onClick={() => {
+                    setCheckoutMethod("card");
+                    setInvoice("");
+                    setVerifyUrl("");
+                  }}
+                  className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 transition-colors ${
+                    checkoutMethod === "card" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500"
+                  }`}
+                >
+                  <CreditCard className="size-3.5" /> Card · Apple Pay
+                </button>
+                {!lightningDisabled && (
+                  <button
+                    onClick={() => setCheckoutMethod("lightning")}
+                    className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 transition-colors ${
+                      checkoutMethod === "lightning"
+                        ? "bg-white text-zinc-900 shadow-sm"
+                        : "text-zinc-500"
+                    }`}
+                  >
+                    <Zap className="size-3.5" /> Advanced · Lightning
+                  </button>
+                )}
+              </div>
+              {lightningDisabled && (
+                <p className="rounded-lg bg-zinc-50 px-3 py-2 text-[11px] text-zinc-500 ring-1 ring-zinc-100">
+                  Lightning payments are disabled for development. Use card checkout or simulate the
+                  purchase below.
+                </p>
+              )}
+
               <ul className="space-y-1.5 text-[12.5px] text-zinc-600">
                 {buyingPost ? (
                   <>
@@ -1234,7 +1521,113 @@ function BadgeModal({
                 )}
               </ul>
 
-              {invoice ? (
+              {checkoutMethod === "card" ? (
+                !BREEZ_MOONPAY_CONFIGURED ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-[12.5px] font-semibold text-zinc-900">
+                      Card checkout isn't connected yet
+                    </p>
+                    <p className="mt-1 text-[11.5px] leading-relaxed text-zinc-600">
+                      Set <code>VITE_BREEZ_API_KEY</code> to enable Apple Pay and cards through
+                      Breez MoonPay. Fans can still pay with Lightning right now.
+                    </p>
+                    <button
+                      onClick={() => setCheckoutMethod("lightning")}
+                      className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-[12px] font-semibold text-amber-800 shadow-sm ring-1 ring-amber-200 hover:bg-amber-100"
+                    >
+                      <Zap className="size-3.5" /> Use Lightning instead
+                    </button>
+                  </div>
+                ) : (
+                  <div className="rounded-xl bg-gradient-to-br from-zinc-900 to-zinc-800 p-4 text-white ring-1 ring-zinc-800">
+                    <div className="flex items-center gap-2">
+                      <span className="grid size-8 place-items-center rounded-lg bg-white/10">
+                        <CreditCard className="size-4" />
+                      </span>
+                      <div>
+                        <p className="text-[12.5px] font-semibold">Apple Pay or credit card</p>
+                        <p className="text-[11px] text-zinc-400">Powered by MoonPay · no wallet</p>
+                      </div>
+                    </div>
+
+                    {moonPayPhase === "preparing" ? (
+                      <div className="mt-3 flex items-center gap-2 text-[11.5px] text-zinc-300">
+                        <Loader2 className="size-3.5 animate-spin" />
+                        Preparing your secure MoonPay checkout…
+                      </div>
+                    ) : moonPay ? (
+                      <>
+                        <p className="mt-3 text-[11.5px] leading-relaxed text-zinc-300">
+                          {moonPayPhase === "done"
+                            ? "Payment complete. Your unlock is ready."
+                            : moonPayPhase === "ready"
+                              ? "Scan with your phone, or open MoonPay here, to pay with Apple Pay, Google Pay or a card. This window updates automatically."
+                              : "Keep this window open — we're finishing your purchase automatically."}
+                        </p>
+                        {(moonPayPhase === "ready" || moonPayPhase === "waiting-funds") && (
+                          <div className="mt-3 flex flex-col items-center gap-2 rounded-xl bg-white p-3">
+                            <QRCodeSVG value={moonPay.url} size={148} level="M" />
+                            <p className="text-[10.5px] text-zinc-500">Scan to pay on your phone</p>
+                            <a
+                              href={moonPay.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand hover:underline"
+                            >
+                              Open MoonPay <ArrowUpRight className="size-3" />
+                            </a>
+                          </div>
+                        )}
+                        {moonPayPhase !== "ready" &&
+                          moonPayPhase !== "done" &&
+                          moonPayPhase !== "error" && (
+                            <div className="mt-3 flex items-center gap-2 text-[11.5px] text-zinc-300">
+                              <Loader2 className="size-3.5 animate-spin" />
+                              {moonPayPhase === "waiting-funds"
+                                ? "Waiting for your card payment to arrive…"
+                                : moonPayPhase === "creating-invoice"
+                                  ? "Preparing the creator's Lightning invoice…"
+                                  : moonPayPhase === "paying"
+                                    ? "Paying the creator over Lightning…"
+                                    : "Confirming your unlock…"}
+                            </div>
+                          )}
+                      </>
+                    ) : (
+                      <>
+                        <p className="mt-3 text-[11.5px] leading-relaxed text-zinc-300">
+                          Pay with Apple Pay, Google Pay or a credit card through MoonPay. No
+                          Bitcoin wallet or seed phrase needed.
+                        </p>
+                        <p className="mt-2 text-[10.5px] leading-relaxed text-zinc-400">
+                          MoonPay may require a minimum card purchase (about $20). Any extra stays
+                          in your Crays card wallet.
+                        </p>
+                        <div className="mt-3 flex items-center gap-1.5 text-[10.5px] font-medium text-emerald-300">
+                          <ShieldCheck className="size-3.5" /> MoonPay takes the card — Crays pays{" "}
+                          {name} over Lightning
+                        </div>
+                      </>
+                    )}
+
+                    {moonPayError && (
+                      <p className="mt-3 rounded-lg bg-amber-500/15 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+                        {moonPayError}
+                      </p>
+                    )}
+                    {moonPay &&
+                      moonPayPhase !== "done" &&
+                      (moonPayPhase === "ready" || moonPayPhase === "error") && (
+                        <button
+                          onClick={() => void finishCardOrder(moonPay.order)}
+                          className="mt-3 w-full rounded-lg bg-white/10 px-3 py-2 text-[11.5px] font-semibold text-white ring-1 ring-white/20 hover:bg-white/15"
+                        >
+                          Check payment status
+                        </button>
+                      )}
+                  </div>
+                )
+              ) : invoice ? (
                 <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
                   <p className="text-[12px] font-semibold text-zinc-900">
                     Scan or open in your Lightning wallet
@@ -1296,6 +1689,37 @@ function BadgeModal({
                   </div>
                 </div>
               )}
+
+              {checkoutMethod === "lightning" && (
+                <div className="flex items-center justify-between gap-3 rounded-xl bg-amber-50/70 px-3 py-2.5 ring-1 ring-amber-100">
+                  <div className="min-w-0">
+                    <p className="text-[12px] font-semibold text-zinc-900">
+                      Just want to support {name}?
+                    </p>
+                    <p className="text-[11px] text-zinc-500">
+                      Send an optional zap — no purchase required.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      onClose();
+                      ui.openZap({ recipient: name, pubkey: creator });
+                    }}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-[12px] font-semibold text-amber-700 shadow-sm ring-1 ring-amber-200 hover:bg-amber-100"
+                  >
+                    <Zap className="size-3.5" /> Zap
+                  </button>
+                </div>
+              )}
+
+              {DEV_PAYMENTS_ENABLED && (
+                <button
+                  onClick={() => grantPurchase()}
+                  className="w-full rounded-xl border border-dashed border-emerald-300 bg-emerald-50 px-3 py-2.5 text-[12px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"
+                >
+                  Simulate {buyingPost ? "post unlock" : "membership"} (dev — no payment)
+                </button>
+              )}
             </>
           )}
         </div>
@@ -1307,30 +1731,59 @@ function BadgeModal({
             </PrimaryBtn>
           ) : (
             <>
-              <GhostBtn onClick={onClose}>{invoice ? "Cancel" : "Maybe later"}</GhostBtn>
+              <GhostBtn onClick={onClose}>
+                {invoice && checkoutMethod === "lightning" ? "Cancel" : "Maybe later"}
+              </GhostBtn>
               <PrimaryBtn
                 className="!bg-amber-500 hover:!bg-amber-600"
-                disabled={paying || creatingInvoice || Boolean(invoice && verifyUrl)}
+                disabled={
+                  paying ||
+                  creatingInvoice ||
+                  openingCard ||
+                  (checkoutMethod === "card" && !BREEZ_MOONPAY_CONFIGURED) ||
+                  (checkoutMethod === "card" &&
+                    (moonPayPhase === "preparing" ||
+                      moonPayPhase === "waiting-funds" ||
+                      moonPayPhase === "creating-invoice" ||
+                      moonPayPhase === "paying" ||
+                      moonPayPhase === "verifying")) ||
+                  Boolean(invoice && verifyUrl && checkoutMethod === "lightning")
+                }
                 onClick={() => void primary()}
               >
-                {paying || creatingInvoice ? (
+                {paying ||
+                creatingInvoice ||
+                openingCard ||
+                (checkoutMethod === "card" && moonPayPhase === "preparing") ? (
                   <Loader2 className="size-4 animate-spin" />
+                ) : checkoutMethod === "card" ? (
+                  <CreditCard className="size-4" />
                 ) : invoice ? (
                   <Check className="size-4" />
                 ) : (
                   <Zap className="size-4" />
                 )}
-                {paying
-                  ? "Paying…"
-                  : creatingInvoice
-                    ? "Creating invoice…"
-                    : invoice
-                      ? verifyUrl
-                        ? "Waiting for payment…"
-                        : "I’ve paid — unlock"
-                      : nostr.wallet.connected
-                        ? `${buyingPost ? "Unlock" : "Subscribe"} · ${sats.toLocaleString()} sats`
-                        : "Pay with Lightning"}
+                {openingCard || (checkoutMethod === "card" && moonPayPhase === "preparing")
+                  ? "Preparing secure checkout…"
+                  : checkoutMethod === "card"
+                    ? moonPayPhase === "error"
+                      ? "Try card again"
+                      : moonPay && moonPayPhase !== "done"
+                        ? moonPayError
+                          ? "Check payment status"
+                          : "Waiting for payment…"
+                        : `Continue to card${usd != null ? ` · ${formatUsd(usd)}` : ""}`
+                    : paying
+                      ? "Paying…"
+                      : creatingInvoice
+                        ? "Creating invoice…"
+                        : invoice
+                          ? verifyUrl
+                            ? "Waiting for payment…"
+                            : "I’ve paid — unlock"
+                          : nostr.wallet.connected
+                            ? `${buyingPost ? "Unlock" : "Subscribe"} · ${sats.toLocaleString()} sats`
+                            : "Pay with Lightning"}
               </PrimaryBtn>
             </>
           )}
@@ -1399,6 +1852,8 @@ const CREATOR_PASS_FALLBACK_SATS = 500_000;
 function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ui = useUI();
   const nostr = useNostr();
+  const devSettings = useDevPaymentSettings();
+  const lightningDisabled = DEV_PAYMENTS_ENABLED && devSettings.disableLightning;
   const pass = useCreatorPass();
   const btc = useBtcPrice();
   const active = isCreatorPassActive(pass);
@@ -1415,6 +1870,12 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
   liveSatsRef.current = liveSats;
 
   const loadInvoice = useCallback(async () => {
+    if (lightningPaymentsDisabled()) {
+      setInvoice("");
+      setVerifyUrl("");
+      setError("");
+      return;
+    }
     if (!CREATOR_PASS_CONFIGURED) {
       setInvoice("");
       setVerifyUrl("");
@@ -1448,9 +1909,15 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
       setError("");
       return;
     }
+    if (lightningDisabled) {
+      setInvoice("");
+      setVerifyUrl("");
+      setError("");
+      return;
+    }
     if (active) return;
     void loadInvoice();
-  }, [open, active, priced, loadInvoice]);
+  }, [open, active, priced, lightningDisabled, loadInvoice]);
 
   // LUD-21: poll the wallet's verify endpoint and activate only after the
   // invoice actually settles, so there is no "I've paid" honor system.
@@ -1484,6 +1951,16 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
       if (timer) window.clearTimeout(timer);
     };
   }, [open, verifyUrl, active, quote, onClose]);
+
+  const activateDevPremium = () => {
+    try {
+      simulatePremiumAccess();
+      toast.success("Crays premium activated (dev — no payment)");
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't simulate premium access.");
+    }
+  };
 
   const payWithWallet = async () => {
     setPaying(true);
@@ -1555,7 +2032,16 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
             </div>
           )}
 
-          {!active && (
+          {!active && lightningDisabled && (
+            <div className="rounded-xl border border-dashed border-emerald-300 bg-emerald-50 p-4 text-center">
+              <p className="text-[12px] font-semibold text-emerald-700">Developer mode</p>
+              <p className="mx-auto mt-1 max-w-[320px] text-[11.5px] leading-relaxed text-zinc-600">
+                Lightning checkout is disabled. Activate Crays premium locally to test members-only
+                publishing and fan checkout without a real payment.
+              </p>
+            </div>
+          )}
+          {!active && !lightningDisabled && (
             <>
               {!CREATOR_PASS_CONFIGURED ? (
                 <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
@@ -1652,6 +2138,13 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
                 }}
               >
                 Write a post
+              </PrimaryBtn>
+            ) : lightningDisabled ? (
+              <PrimaryBtn
+                className="!bg-emerald-600 hover:!bg-emerald-700"
+                onClick={activateDevPremium}
+              >
+                <Crown className="size-4" /> Activate premium (dev)
               </PrimaryBtn>
             ) : nostr.wallet.connected && invoice ? (
               <PrimaryBtn

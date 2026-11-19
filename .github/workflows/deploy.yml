@@ -54,6 +54,9 @@ jobs:
           # Set these as repository variables (Settings → Secrets and variables →
           # Actions → Variables). Empty values keep the placeholder checkout.
           VITE_CRAYS_LIGHTNING_ADDRESS: ${{ vars.CRAYS_LIGHTNING_ADDRESS }}
+          VITE_BREEZ_API_KEY: ${{ vars.BREEZ_API_KEY }}
+          VITE_BREEZ_MOONPAY_DELIVERY: ${{ vars.BREEZ_MOONPAY_DELIVERY }}
+          VITE_CRAYS_DEV_PAYMENTS: ${{ vars.CRAYS_DEV_PAYMENTS }}
         run: yarn build
 
       - name: Configure Pages

@@ -23,7 +23,7 @@ import {
   useCreatorBadges,
 } from "@/lib/nostr/badges";
 import { CREATOR_PASS_USD, isCreatorPassActive, useCreatorPass } from "@/lib/nostr/creator-pass";
-import { formatUsd } from "@/lib/nostr/price";
+import { formatUsd, satsToUsd, useBtcPrice } from "@/lib/nostr/price";
 import {
   BadgeCheck,
   Calendar,
@@ -183,6 +183,7 @@ function Profile() {
 
   const badges = useCreatorBadges();
   const creatorPass = useCreatorPass();
+  const btc = useBtcPrice();
   if (!pubkey) {
     return (
       <PageShell title="Profile" subtitle="Public face of your sovereign identity.">
@@ -227,6 +228,10 @@ function Profile() {
   const hasCreatorPass = isCreatorPassActive(creatorPass);
   const hasBadgeProgram = badgePrice != null;
   const showMembership = hasBadgeProgram || isOwn;
+  const priceLabel = (amount: number) => {
+    const usd = satsToUsd(amount, btc);
+    return usd == null ? `${compactNumber(amount)} sats` : formatUsd(usd);
+  };
 
   const toggleFollow = async () => {
     if (!ui.requireAuth("follow creators")) return;
@@ -300,7 +305,7 @@ function Profile() {
                   <Crown className="size-3.5" />
                   {ownedBadge
                     ? `Member · ${daysLeft(ownedBadge)}d left`
-                    : `Join · ${compactNumber(badgePrice)} sats`}
+                    : `Join · ${priceLabel(badgePrice)}`}
                 </button>
               )}
               {isOwn && badgePrice != null && (
@@ -428,8 +433,8 @@ function Profile() {
               </p>
               <p className="mt-1 max-w-xl text-[12.5px] leading-relaxed text-zinc-500">
                 {hasBadgeProgram
-                  ? `A membership unlocks every members-only post from ${name} for ${BADGE_DAYS} days, or readers can unlock one post at a time. ${name} is paid directly over Lightning.`
-                  : "Publish a members-only post to start your membership. Fans can subscribe monthly or unlock a single post."}
+                  ? `A membership unlocks every members-only post from ${name} for ${BADGE_DAYS} days, or readers can unlock one post at a time. Fans pay with Apple Pay or credit card — no wallet needed. Lightning and zaps are available in advanced mode.`
+                  : "Publish a members-only post to start your membership. Fans can subscribe with Apple Pay or card, or unlock a single post."}
               </p>
             </div>
 
@@ -438,7 +443,7 @@ function Profile() {
                 onClick={() => ui.openBadge({ creator: pubkey, name, sats: badgePrice })}
                 className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-500 px-4 py-2.5 text-[12.5px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600 sm:w-auto"
               >
-                <Crown className="size-4" /> Join · {compactNumber(badgePrice)} sats / mo
+                <Crown className="size-4" /> Join with card · {priceLabel(badgePrice)}
               </button>
             )}
             {!isOwn && ownedBadge && (

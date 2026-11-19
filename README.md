@@ -18,36 +18,88 @@ yarn lint           # eslint
 yarn build          # production build
 ```
 
-## Crays premium payments
+## Payments
+
+### Fan checkout: Apple Pay / card by default, Lightning in advanced mode
+
+Fans can buy a creator membership or unlock a single post with Apple Pay, Google
+Pay or a credit card — no Bitcoin, wallet or seed phrase required. The checkout
+modal defaults to **Card · Apple Pay** and uses the
+[Breez Spark SDK](https://sdk-doc-spark.breez.technology/guide/buy_bitcoin.html)
+plus MoonPay.
+
+The card flow is:
+
+1. Crays records a local order and asks Breez for a MoonPay checkout URL.
+2. On mobile the browser redirects to MoonPay; on desktop the modal shows the
+   URL as a QR code, so the fan can pay with Apple Pay on their phone.
+3. MoonPay tops up the browser's Breez Spark wallet.
+4. As soon as the funds arrive, that wallet pays the creator's BOLT-11 invoice
+   over Lightning. The creator still receives sats directly — Crays never holds
+   the money.
+5. Crays grants the membership or post unlock and announces the purchase over
+   Nostr.
+
+The order survives the MoonPay redirect in local storage, so a returning fan is
+unlocked automatically. Only one Crays tab drives the wallet at a time; a
+redirect tab waits for the original tab instead of opening a second wallet.
+
+**Advanced mode** (Settings → Payments, or the toggle in checkout) switches to
+Lightning: BOLT-11 invoices with [LUD-21](https://github.com/lnurl/luds/blob/luds/21.md)
+verification, Nostr Wallet Connect one-tap payments, and optional zap tips.
+
+Configure card checkout at build time:
+
+| Variable                       | Purpose                                                                                                                      |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_BREEZ_API_KEY`           | Breez SDK API key ([request one here](https://breez.technology/request-api-key/)). Required to enable MoonPay card checkout. |
+| `VITE_BREEZ_MOONPAY_DELIVERY`  | Optional. `crosschain` (default) buys USDC on Solana for faster arrival; `bitcoin` forces MoonPay's on-chain BTC delivery.   |
+| `VITE_CRAYS_LIGHTNING_ADDRESS` | Lightning address (or LNURL) that receives Crays premium. Required — the `crays@npub.cash` fallback cannot issue invoices.   |
+| `VITE_CRAYS_DEV_PAYMENTS`      | Optional. Set to `true` in a staging build to show the developer payment tools (disable Lightning, simulate premium).        |
+
+Until `VITE_BREEZ_API_KEY` is set, the card tab shows a setup notice and
+Lightning remains available.
+
+#### Wallet and fee handling
+
+The first card checkout creates a BIP-39 seed and stores it in this browser's
+local storage, then connects to Breez Spark. MoonPay is asked for the purchase
+price plus a 2% buffer (and at least 100 sats) so Lightning routing fees don't
+shorten the invoice. The wallet pays the creator with
+`feePolicy: "feesExcluded"`, so the full invoice amount reaches the creator.
+
+This browser wallet is intended to be transient: it spends the MoonPay deposit
+immediately. For a production deployment with larger balances, replace the
+local-storage seed with the Breez passkey flow and add a recovery/export path.
+
+MoonPay's on-chain Bitcoin delivery can take several minutes to confirm. The
+cross-chain (USDC on Solana) route is much faster and is used first when the
+purchase is at least about $20; smaller purchases use on-chain Bitcoin delivery.
+If funds are still in flight when the modal closes, the unfinished order is
+recorded and resumes the next time the fan returns.
+
+### Creator premium (Lightning)
 
 Creators pay for Crays premium in sats. Checkout resolves the configured
 Lightning address (or LNURL) into a real BOLT-11 invoice, shows it as a QR, and
-polls the wallet's [LUD-21](https://github.com/lnurl/luds/blob/luds/21.md)
-`verify` endpoint. The badge turns on only after the payment settles — there is
-no "I've paid" button. The same verification unlocks fan memberships and
-single-post purchases, so scanning with any wallet works.
+polls the wallet's LUD-21 `verify` endpoint. The badge turns on only after the
+payment settles — there is no "I've paid" button. The same verification unlocks
+fan memberships and single-post purchases in advanced mode, so scanning with
+any wallet works.
 
-Checkout is Lightning-only — there is no card or stablecoin tab. Buyers who
-don't hold sats can use any wallet or on-ramp that funds a Lightning payment,
-then scan the same invoice.
+For GitHub Pages, add `BREEZ_API_KEY` (and optionally
+`BREEZ_MOONPAY_DELIVERY`) plus `CRAYS_LIGHTNING_ADDRESS` as repository variables
+under **Settings → Secrets and variables → Actions → Variables**;
+`.github/workflows/deploy.yml` maps them to the `VITE_*` build variables.
+Leaving the Lightning address unset keeps the placeholder checkout notice. To
+create the receiving address, claim a username for the Crays npub at
+[npub.cash](https://npub.cash) (or use any LNURL-pay address) and set
+`CRAYS_LIGHTNING_ADDRESS`.
 
-| Variable                       | Purpose                                                                                                                    |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `VITE_CRAYS_LIGHTNING_ADDRESS` | Lightning address (or LNURL) that receives Crays premium. Required — the `crays@npub.cash` fallback cannot issue invoices. |
-
-Set this at build time. For GitHub Pages, add the `CRAYS_LIGHTNING_ADDRESS`
-repository variable under **Settings → Secrets and variables → Actions →
-Variables**; `.github/workflows/deploy.yml` maps it to
-`VITE_CRAYS_LIGHTNING_ADDRESS`. Leaving it unset keeps the placeholder
-checkout. To create the receiving address, claim a username for the Crays npub
-at [npub.cash](https://npub.cash) (or use any LNURL-pay address) and set
-`CRAYS_LIGHTNING_ADDRESS`. Until then the modal shows a "checkout is almost
-ready" notice instead of a QR.
-
-The `verify` endpoint is optional per LUD-21. If a wallet doesn't expose one,
-the creator checkout asks the buyer to connect a wallet and pay in one tap,
-which confirms locally; fan purchases keep a clearly-labelled manual unlock for
-those addresses.
+The Lightning `verify` endpoint is optional per LUD-21. If a wallet doesn't
+expose one, the creator checkout asks the buyer to connect a wallet and pay in
+one tap, which confirms locally; fan purchases keep a clearly-labelled manual
+unlock for those addresses.
 
 ## Deploying to GitHub Pages
 

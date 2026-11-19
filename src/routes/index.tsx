@@ -20,13 +20,13 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Follow creators, unlock premium content with Lightning, and grow a paid audience on the open Nostr protocol.",
+          "Follow creators, unlock premium content with Apple Pay, card or Lightning, and grow a paid audience on the open Nostr protocol.",
       },
       { property: "og:title", content: "Crays — Nostr for Bitcoin creators" },
       {
         property: "og:description",
         content:
-          "Follow creators, unlock premium content with Lightning, and grow a paid audience on the open Nostr protocol.",
+          "Follow creators, unlock premium content with Apple Pay, card or Lightning, and grow a paid audience on the open Nostr protocol.",
       },
       { property: "og:type", content: "website" },
     ],
@@ -123,7 +123,7 @@ function Home() {
           <header className="hidden items-end justify-between lg:flex">
             <div>
               <h1 className="text-[26px] font-semibold leading-none tracking-tight text-zinc-900">
-                {signedOut ? "Home" : "Home"}
+                Home
               </h1>
               <p className="mt-1.5 text-[13px] text-zinc-500">
                 {signedOut

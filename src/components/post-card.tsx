@@ -13,6 +13,7 @@ import {
   Link as LinkIcon,
   UserPlus,
   Lock,
+  CreditCard,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
@@ -29,9 +30,9 @@ import {
   useCreatorBadges,
   usePostUnlocks,
   DEFAULT_BADGE_SATS,
-  BADGE_DAYS,
 } from "@/lib/nostr/badges";
 import { usePreferences } from "@/lib/preferences";
+import { formatUsd, satsToUsd, useBtcPrice } from "@/lib/nostr/price";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -96,6 +97,7 @@ export function PostCard({ post }: { post: Post }) {
   const ui = useUI();
   const nostr = useNostr();
   const preferences = usePreferences();
+  const btc = useBtcPrice();
   const [bookmarked, setBookmarked] = useState(() => nostr.bookmarks.includes(post.id));
   const [reposted, setReposted] = useState(false);
   const [revealed, setRevealed] = useState(false);
@@ -122,6 +124,10 @@ export function PostCard({ post }: { post: Post }) {
   const locked = Boolean(post.premium && !isAuthor && !badge && !unlockedPost);
   const badgeSats = post.premiumSats ?? DEFAULT_BADGE_SATS;
   const unlockSats = post.premiumUnlockSats ?? Math.max(21, Math.round(badgeSats / 10));
+  const priceLabel = (amount: number) => {
+    const usd = satsToUsd(amount, btc);
+    return usd == null ? `${compactNumber(amount)} sats` : formatUsd(usd);
+  };
 
   const shareUrl = post.event
     ? `https://njump.me/${nip19.neventEncode({ id: post.event.id, author: post.event.pubkey })}`
@@ -298,7 +304,7 @@ export function PostCard({ post }: { post: Post }) {
                 }
                 className="inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-4 py-2 text-[12px] font-semibold text-white shadow-card transition-colors hover:bg-amber-600"
               >
-                <Zap className="size-3.5" /> Unlock this post · {compactNumber(unlockSats)} sats
+                <CreditCard className="size-3.5" /> Unlock this post · {priceLabel(unlockSats)}
               </button>
               <button
                 onClick={() =>
@@ -313,11 +319,11 @@ export function PostCard({ post }: { post: Post }) {
                 }
                 className="inline-flex items-center gap-1.5 rounded-full bg-white/80 px-4 py-2 text-[12px] font-semibold text-amber-800 ring-1 ring-amber-200 transition-colors hover:bg-white"
               >
-                <Crown className="size-3.5" /> or subscribe · {compactNumber(badgeSats)} sats / mo
+                <Crown className="size-3.5" /> or subscribe · {priceLabel(badgeSats)} / mo
               </button>
             </div>
             <p className="text-[10.5px] text-zinc-400">
-              {BADGE_DAYS} days of access with a membership · paid directly to {post.author}
+              Apple Pay or card — no wallet needed · Lightning & zaps in advanced mode
             </p>
           </div>
         </div>
