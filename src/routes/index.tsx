@@ -112,11 +112,11 @@ function Home() {
           <header className="hidden items-end justify-between lg:flex">
             <div>
               <h1 className="text-[26px] font-semibold leading-none tracking-tight text-zinc-900">
-                {signedOut ? "Creator tools" : "Home"}
+                {signedOut ? "Crays for creators" : "Home"}
               </h1>
               <p className="mt-1.5 text-[13px] text-zinc-500">
                 {signedOut
-                  ? "Publish, get paid and grow — on your own keys."
+                  ? "Keep 100% of your earnings. Your link-in-bio, subscriptions and dashboard — no 20% platform cut."
                   : tab === "following"
                     ? "Only posts from the creators you follow — no algorithm in the way."
                     : "Live from the Nostr relays, as it happens."}
@@ -159,17 +159,18 @@ function Home() {
             <div className="flex items-end justify-between">
               <div>
                 <h2 className="text-[17px] font-semibold tracking-tight text-zinc-900">
-                  Public feed
+                  Creators live on Nostr
                 </h2>
                 <p className="mt-1 text-[12.5px] text-zinc-500">
-                  Live from the relays — no account needed to read.
+                  Explore the public feed — no account needed to read. Create your page to start
+                  earning with 0% platform fees.
                 </p>
               </div>
               <button
-                onClick={() => ui.openAuth({ intent: "join the conversation" })}
+                onClick={() => ui.openAuth({ intent: "create your Crays creator page" })}
                 className="rounded-full bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-black"
               >
-                Join Crays
+                Create your page
               </button>
             </div>
           )}

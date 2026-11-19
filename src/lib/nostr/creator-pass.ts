@@ -20,7 +20,7 @@ export type CreatorPass = {
 
 export const CREATOR_PASS_DAYS = 30;
 /** Crays' monthly price, billed in sats at the live BTC rate. */
-export const CREATOR_PASS_USD = 50;
+export const CREATOR_PASS_USD = 49;
 
 /**
  * Where creators pay for the Crays badge. Point this at the real Crays

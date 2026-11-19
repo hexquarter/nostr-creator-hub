@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { PageShell } from "@/components/page-shell";
+import { CreatorToolsHero } from "@/components/creator-tools-hero";
 import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
 import { fetchFeed, fetchProfileStats } from "@/lib/nostr/social";
@@ -17,7 +18,7 @@ import {
   isCreatorPassActive,
   useCreatorPass,
 } from "@/lib/nostr/creator-pass";
-import { formatUsd, usdToSats, useBtcPrice } from "@/lib/nostr/price";
+import { usdToSats, useBtcPrice } from "@/lib/nostr/price";
 import { compactNumber } from "@/lib/format";
 import {
   Zap,
@@ -40,7 +41,7 @@ export const Route = createFileRoute("/premium")({
       {
         name: "description",
         content:
-          "Crays Premium: for $50/month, sell memberships, publish members-only posts and get paid in sats over Lightning.",
+          "Crays for creators: keep 100% of your earnings with a link-in-bio page, memberships, content gating, analytics and instant payouts — €49/mo Verified Creator Badge.",
       },
     ],
   }),
@@ -49,56 +50,84 @@ export const Route = createFileRoute("/premium")({
 
 const features = [
   {
-    icon: KeyRound,
-    title: "Passkey identity",
-    desc: "A Nostr key protected by your device's passkey — no seed phrase to lose.",
+    icon: LinkIcon,
+    title: "Link-in-bio page",
+    desc: "A public page where fans can discover you, subscribe and pay in one place.",
   },
   {
     icon: FileText,
-    title: "Notes & long-form",
-    desc: "Publish kind-1 notes and kind-30023 articles to your relays in one step.",
+    title: "Content & gating",
+    desc: "Publish notes and articles, and show or hide posts based on subscription.",
   },
   {
     icon: Zap,
-    title: "Lightning zaps",
-    desc: "Send and receive sats with any NIP-47 wallet. 100% goes to the creator.",
+    title: "Instant payouts",
+    desc: "Get paid directly with 0% platform fees. Earnings go to you — no 30-day waits.",
   },
   {
     icon: Users,
-    title: "Follow graph",
-    desc: "Your follow list lives on Nostr, so it travels with your key to any client.",
+    title: "Audience you own",
+    desc: "Your identity, follows and subscribers live on open Nostr keys — no lock-in.",
+  },
+  {
+    icon: KeyRound,
+    title: "Easy fan checkout",
+    desc: "Fans can pay with Apple Pay or credit card. No crypto, wallet or seed phrase needed.",
   },
   {
     icon: MessageCircle,
     title: "Encrypted DMs",
-    desc: "Private NIP-04 messages, decrypted only on your device.",
+    desc: "Private messages with your fans, decrypted only on your device.",
   },
 ];
 
 const premiumBenefits = [
-  "Sell monthly memberships and single-post unlocks",
-  "Publish members-only notes and long-form articles",
-  "Fans pay you directly over Lightning — 0% platform fee",
-  "Members, members-only posts and zaps in one dashboard",
-  "Passkey sign-in and encrypted DMs included",
+  "Keep 100% of earnings — 0% platform/content fees (flat €49/mo badge)",
+  "Public link-in-bio page for fans to subscribe and pay",
+  "Monthly memberships, single-post unlocks & basic content gating",
+  "Simple analytics: subscribers, total earnings, subs per day",
+  "Free trial link generator to bring in new fans",
+  "Fans pay with Apple Pay or credit card — no crypto needed",
 ];
 
 function Premium() {
   const nostr = useNostr();
+  const pass = useCreatorPass();
+  const active = isCreatorPassActive(pass);
 
   return (
-    <PageShell
-      wide
-      title="Creator tools"
-      subtitle="Everything Crays adds on top of the open Nostr protocol — free."
-    >
+    <PageShell wide title="Creator tools">
+      {!nostr.account ? (
+        <CreatorToolsHero />
+      ) : (
+        <section className="rounded-2xl bg-zinc-900 p-5 text-white shadow-card sm:p-6">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-200/90">
+            Crays for creators
+          </p>
+          <h2 className="mt-2 text-balance text-[22px] font-semibold leading-tight tracking-tight">
+            Your link-in-bio, memberships and earnings — in one place.
+          </h2>
+          <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-zinc-300">
+            Keep 100% of what you earn. Fans can subscribe or unlock posts (and pay with Apple Pay
+            or card — no crypto needed), while you manage subscribers, content gating and analytics
+            from this dashboard. Flat €49/mo for your Verified Creator Badge.
+          </p>
+          {!active && (
+            <p className="mt-2 text-[12px] text-zinc-400">
+              If you earn €500/mo you save ~€100 in platform fees — pay €49, keep €451. The badge
+              pays for itself after 3 fans.
+            </p>
+          )}
+        </section>
+      )}
+
       <PremiumBadgeCard />
 
       <CreatorDashboard />
 
       <section>
         <h3 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-          Everything else, included
+          Built for creators (and their fans)
         </h3>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {features.map((f) => (
@@ -118,11 +147,35 @@ function Premium() {
         </div>
       </section>
 
+      <section className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 sm:p-6">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+          Why creators switch
+        </h3>
+        <ul className="mt-3 grid gap-2 text-[12.5px] leading-relaxed text-zinc-600 sm:grid-cols-2">
+          <li>
+            <span className="font-semibold text-zinc-900">0% platform fees.</span> Most fan
+            platforms take ~20%. On Crays you keep everything except a flat €49/mo badge.
+          </li>
+          <li>
+            <span className="font-semibold text-zinc-900">Instant payouts.</span> No 30-day waiting
+            period — earnings go straight to you.
+          </li>
+          <li>
+            <span className="font-semibold text-zinc-900">Own your audience.</span> Your identity
+            and follows live on Nostr keys, not inside a walled garden.
+          </li>
+          <li>
+            <span className="font-semibold text-zinc-900">Fans don’t need crypto.</span> They can
+            subscribe with Apple Pay or credit card. We handle Bitcoin behind the scenes.
+          </li>
+        </ul>
+      </section>
+
       <p className="flex items-center justify-center gap-1.5 text-center text-[11.5px] text-zinc-400">
         <LinkIcon className="size-3" />
         {nostr.account
           ? `Signed in as ${nostr.account.npub.slice(0, 12)}…`
-          : "Powered by Nostr + Lightning"}
+          : "Your public link-in-bio & creator dashboard on Nostr"}
       </p>
     </PageShell>
   );
@@ -170,25 +223,25 @@ function PremiumBadgeCard() {
 
           <h3 className="mt-4 text-balance text-[23px] font-semibold leading-tight tracking-tight sm:text-[26px]">
             {active
-              ? "Your badge is live — go sell a membership."
-              : "Get paid by your audience, not a platform."}
+              ? "Your Verified Creator Badge is live."
+              : "Keep 100% of your earnings — not 80%."}
           </h3>
           <p className="mt-2 max-w-md text-[12.5px] leading-relaxed text-zinc-300">
             {active
-              ? "Fans can join your membership or unlock a single post. Payments land in your Lightning wallet — Crays never takes a cut."
-              : "Crays premium unlocks the paid side of Crays: fans can subscribe to you monthly or buy one post at a time, and every sat goes straight to your wallet."}
+              ? "Your link-in-bio, memberships and members-only posts are ready. Fans can pay with Apple Pay or card, and payouts are instant — Crays never takes a cut."
+              : "Get the Crays Verified Creator Badge for €49/mo: a public link-in-bio page, memberships, content gating, analytics and instant payouts with 0% platform fees. Fans can pay by card — no crypto needed."}
           </p>
 
           <div className="mt-5 flex flex-wrap items-end gap-x-2 gap-y-1">
             <span className="text-[28px] font-bold leading-none tracking-tight">
-              {active ? `${daysLeft} days` : `${formatUsd(CREATOR_PASS_USD)} / month`}
+              {active ? `${daysLeft} days` : "€49 / month"}
             </span>
             <span className="pb-0.5 text-[11px] text-zinc-400">
               {active
                 ? "left on your badge"
                 : sats != null
-                  ? `≈ ${sats.toLocaleString()} sats at the live BTC rate`
-                  : "billed in sats at the live BTC rate"}
+                  ? `≈ ${sats.toLocaleString()} sats · billed at the live BTC rate`
+                  : "flat badge + analytics · no content fees"}
             </span>
           </div>
 
@@ -225,7 +278,7 @@ function PremiumBadgeCard() {
             )}
           </div>
           <p className="mt-3 text-[10.5px] text-white/40">
-            {CREATOR_PASS_DAYS}-day periods · no auto-renew · your keys stay on your device
+            €49/mo badge · 0% platform fees · instant payouts · your keys stay on your device
           </p>
         </div>
 
@@ -339,7 +392,7 @@ function CreatorDashboard() {
               Sign in
             </button>
             <p className="mt-2 text-center text-[11px] text-zinc-400">
-              {formatUsd(CREATOR_PASS_USD)} / month · cancel anytime
+              €49 / month · badge + analytics · 0% platform fees
             </p>
           </div>
         </div>
@@ -411,8 +464,8 @@ function CreatorDashboard() {
           }
           hint={
             passActive
-              ? `${formatUsd(CREATOR_PASS_USD)} / month · renews in ${CREATOR_PASS_DAYS} days`
-              : `Required to sell memberships · ${formatUsd(CREATOR_PASS_USD)} / month`
+              ? `€49 / month · renews in ${CREATOR_PASS_DAYS} days`
+              : `€49 / month badge + analytics · required to sell memberships`
           }
           action={
             <button
