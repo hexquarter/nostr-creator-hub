@@ -676,10 +676,10 @@ export function NostrProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const fetchDMs = useCallback(async () => {
+    if (!account) throw new Error("Sign in first.");
     const signer = requireSigner();
-    const pubkey = await signer.getPublicKey();
-    return fetchDirectMessages(signer, pubkey);
-  }, [requireSigner]);
+    return fetchDirectMessages(signer, account.pubkey);
+  }, [account, requireSigner]);
 
   const sendDM = useCallback(
     async (recipient: string, text: string) => {
