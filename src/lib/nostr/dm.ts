@@ -32,9 +32,7 @@ function firstTag(event: { tags?: string[][] }, name: string) {
 }
 
 function pTags(event: { tags?: string[][] }): string[] {
-  return (event.tags ?? [])
-    .filter((tag) => tag[0] === "p" && tag[1])
-    .map((tag) => tag[1]);
+  return (event.tags ?? []).filter((tag) => tag[0] === "p" && tag[1]).map((tag) => tag[1]);
 }
 
 function randomCreatedAt() {
@@ -52,10 +50,7 @@ type Rumor = {
   [key: string]: unknown;
 };
 
-async function unwrapNip17(
-  wrap: NostrEvent,
-  signer: AppSigner,
-): Promise<{ rumor: Rumor } | null> {
+async function unwrapNip17(wrap: NostrEvent, signer: AppSigner): Promise<{ rumor: Rumor } | null> {
   if (wrap.kind !== 1059 || !signer.nip44Decrypt) return null;
   try {
     const seal = JSON.parse(await signer.nip44Decrypt(wrap.pubkey, wrap.content)) as NostrEvent;
@@ -78,10 +73,7 @@ async function unwrapNip17(
 
 function wrapSeal(seal: NostrEvent, recipient: string): NostrEvent {
   const sk = generateSecretKey();
-  const content = nip44.encrypt(
-    JSON.stringify(seal),
-    nip44.getConversationKey(sk, recipient),
-  );
+  const content = nip44.encrypt(JSON.stringify(seal), nip44.getConversationKey(sk, recipient));
   return finalizeEvent(
     {
       kind: 1059,
@@ -156,7 +148,10 @@ export async function fetchDirectMessages(
 
   if (canNip17) {
     try {
-      const wraps = await queryEvents({ kinds: [1059], "#p": [pubkey], limit: 400 }, { timeout: 7000 });
+      const wraps = await queryEvents(
+        { kinds: [1059], "#p": [pubkey], limit: 400 },
+        { timeout: 7000 },
+      );
       for (const wrap of wraps) {
         if (seen.has(wrap.id)) continue;
         const unwrapped = await unwrapNip17(wrap, signer);
@@ -166,7 +161,7 @@ export async function fetchDirectMessages(
         const mine = rumor.pubkey === pubkey;
         const participants = pTags(rumor);
         const counterparty = mine
-          ? participants.find((p) => p !== pubkey) ?? participants[0] ?? ""
+          ? (participants.find((p) => p !== pubkey) ?? participants[0] ?? "")
           : rumor.pubkey;
         if (!counterparty) continue;
         const id = rumor.id || wrap.id;
