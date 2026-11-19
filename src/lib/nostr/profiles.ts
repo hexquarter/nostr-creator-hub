@@ -1,5 +1,5 @@
 import { nip19, type NostrEvent } from "nostr-tools";
-import { queryEvents } from "./relays";
+import { getRelayList, normalizeRelayUrl, queryEvents } from "./relays";
 
 export type Profile = {
   pubkey: string;
@@ -128,11 +128,48 @@ function clean(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export async function fetchProfile(pubkey: string, relays?: string[]): Promise<Profile> {
-  const events = await queryEvents(
-    { kinds: [0], authors: [pubkey], limit: 1 },
-    { relays, timeout: 3500 },
+const PROFILE_DISCOVERY_RELAYS = [
+  "wss://purplepag.es",
+  "wss://relay.snort.social",
+  "wss://relay.nostr.net",
+  "wss://relay.noswhere.com",
+  "wss://profiles.nostr1.com",
+  "wss://user.kindpag.es",
+];
+
+async function discoverUserRelays(pubkey: string, hints: string[] = []): Promise<string[]> {
+  const sources = Array.from(
+    new Set([...hints, ...getRelayList(), ...PROFILE_DISCOVERY_RELAYS].filter(Boolean)),
   );
+  const events = await queryEvents(
+    { kinds: [10002], authors: [pubkey], limit: 1 },
+    { relays: sources, timeout: 3500, fresh: true },
+  );
+  const event = events[0];
+  if (!event) return [];
+  const relays = new Set<string>();
+  for (const tag of event.tags) {
+    if (tag[0] !== "r" || !tag[1]) continue;
+    const url = normalizeRelayUrl(tag[1]);
+    if (url) relays.add(url);
+  }
+  return [...relays];
+}
+
+export async function fetchProfile(pubkey: string, relays?: string[]): Promise<Profile> {
+  const base = relays && relays.length > 0 ? relays : getRelayList();
+  let events = await queryEvents(
+    { kinds: [0], authors: [pubkey], limit: 1 },
+    { relays: base, timeout: 3500 },
+  );
+  if (!events[0]) {
+    const discovered = await discoverUserRelays(pubkey, relays ?? []);
+    const merged = Array.from(new Set([...base, ...discovered, ...PROFILE_DISCOVERY_RELAYS]));
+    events = await queryEvents(
+      { kinds: [0], authors: [pubkey], limit: 1 },
+      { relays: merged, timeout: 5000, fresh: true },
+    );
+  }
   return events[0] ? profileFromEvent(events[0]) : emptyProfile(pubkey);
 }
 

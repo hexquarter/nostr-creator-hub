@@ -194,14 +194,15 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     async (pubkey: string, method: NostrAuthMethod, prfBacked = false) => {
       const base = emptyProfile(pubkey);
       setAccount(accountFrom(pubkey, method, base, prfBacked));
-      try {
-        const profile = await fetchProfile(pubkey);
-        setAccount((current) =>
-          current && current.pubkey === pubkey ? { ...current, profile } : current,
-        );
-      } catch {
-        // keep the npub placeholder if relays are unreachable
-      }
+      void fetchProfile(pubkey)
+        .then((profile) => {
+          setAccount((current) =>
+            current && current.pubkey === pubkey ? { ...current, profile } : current,
+          );
+        })
+        .catch(() => {
+          // keep the npub placeholder if relays are unreachable
+        });
     },
     [],
   );
