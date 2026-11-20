@@ -14,6 +14,8 @@ import {
   UserPlus,
   Lock,
   CreditCard,
+  Heart,
+  Loader2,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
@@ -23,7 +25,7 @@ import { AvatarTile } from "./avatar-tile";
 import { useUI } from "./modals/ui-provider";
 import { useNostr } from "./nostr-provider";
 import { compactNumber, timeAgo } from "@/lib/format";
-import { contentWithoutImages, type FeedNote } from "@/lib/nostr/social";
+import { contentWithoutImages, fetchReplies, type FeedNote } from "@/lib/nostr/social";
 import { shortNpub } from "@/lib/nostr/profiles";
 import {
   isBadgeActive,
@@ -56,6 +58,7 @@ export type Post = {
   images?: string[];
   sensitive?: { reason: string; note?: string };
   replies: number;
+  reactions: number;
   zaps: string;
   reposts: number;
   /** The underlying Nostr event, when this post is real. */
@@ -83,6 +86,7 @@ export function postFromNote(note: FeedNote): Post {
       ? { reason: note.contentWarning, note: note.contentWarning }
       : undefined,
     replies: note.counts.replies,
+    reactions: note.counts.reactions,
     reposts: note.counts.reposts,
     zaps:
       note.counts.zapSats > 0
@@ -100,8 +104,14 @@ export function PostCard({ post }: { post: Post }) {
   const btc = useBtcPrice();
   const [bookmarked, setBookmarked] = useState(() => nostr.bookmarks.includes(post.id));
   const [reposted, setReposted] = useState(false);
+  const [liked, setLiked] = useState(false);
+  const [likeDelta, setLikeDelta] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<string>>(() => new Set());
+  const [showThread, setShowThread] = useState(false);
+  const [threadNotes, setThreadNotes] = useState<FeedNote[]>([]);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [threadLoaded, setThreadLoaded] = useState(false);
 
   // Preferences live in localStorage, so apply them after hydration to keep
   // server and client markup identical.
@@ -177,6 +187,41 @@ export function PostCard({ post }: { post: Post }) {
       toast.success("Reposted to your followers");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Couldn't repost that.");
+    }
+  };
+
+  const doLike = async () => {
+    if (liked) return;
+    if (!post.event) {
+      setLiked(true);
+      setLikeDelta(1);
+      return;
+    }
+    if (!ui.requireAuth("react to posts")) return;
+    try {
+      await nostr.react(post.event);
+      setLiked(true);
+      setLikeDelta(1);
+      toast.success("Liked");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't react to that post.");
+    }
+  };
+
+  const toggleThread = async () => {
+    const next = !showThread;
+    setShowThread(next);
+    if (next && !threadLoaded && post.event) {
+      setThreadLoading(true);
+      try {
+        const replies = await fetchReplies(post.event.id);
+        setThreadNotes(replies);
+        setThreadLoaded(true);
+      } catch {
+        toast.error("Couldn't load replies right now.");
+      } finally {
+        setThreadLoading(false);
+      }
     }
   };
 
@@ -392,13 +437,9 @@ export function PostCard({ post }: { post: Post }) {
           icon={MessageCircle}
           label={String(post.replies)}
           hover="hover:text-brand"
-          onClick={() =>
-            ui.openCompose({
-              mode: "reply",
-              replyTo: post.handle,
-              replyToEvent: post.event,
-            })
-          }
+          active={showThread}
+          activeClass="text-brand"
+          onClick={() => void toggleThread()}
         />
         <Action
           icon={Repeat2}
@@ -407,6 +448,14 @@ export function PostCard({ post }: { post: Post }) {
           active={reposted}
           activeClass="text-emerald-600"
           onClick={() => void doRepost()}
+        />
+        <Action
+          icon={Heart}
+          label={String(post.reactions + likeDelta)}
+          hover="hover:text-rose-500"
+          active={liked}
+          activeClass="text-rose-500"
+          onClick={() => void doLike()}
         />
         <Action
           icon={Zap}
@@ -436,6 +485,121 @@ export function PostCard({ post }: { post: Post }) {
           />
         </div>
       </footer>
+
+      {showThread && (
+        <section className="space-y-3 border-t border-zinc-100 pt-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[12px] font-semibold text-zinc-800">
+              Replies{post.replies ? ` · ${post.replies}` : ""}
+            </p>
+            <button
+              onClick={() =>
+                ui.openCompose({
+                  mode: "reply",
+                  replyTo: post.handle,
+                  replyToEvent: post.event,
+                })
+              }
+              className="rounded-full bg-zinc-900 px-3 py-1.5 text-[11.5px] font-semibold text-white transition-colors hover:bg-black"
+            >
+              Reply
+            </button>
+          </div>
+
+          {threadLoading ? (
+            <p className="flex items-center gap-2 py-2 text-[12px] text-zinc-400">
+              <Loader2 className="size-3.5 animate-spin" /> Loading replies…
+            </p>
+          ) : !post.event ? (
+            <p className="text-[12px] text-zinc-400">Replies are available for Nostr notes.</p>
+          ) : threadNotes.length === 0 ? (
+            <p className="text-[12px] text-zinc-400">No replies yet. Be the first to reply.</p>
+          ) : (
+            <ul className="space-y-2.5">
+              {threadNotes.map((reply) => {
+                const rName = reply.author.displayName || reply.author.name || reply.author.handle;
+                const rImages = reply.images.filter((url) => !failedImages.has(url));
+                const replyText = contentWithoutImages(reply.content, rImages);
+                return (
+                  <li key={reply.id} className="rounded-xl bg-zinc-50/80 p-3 ring-1 ring-zinc-100">
+                    <div className="flex gap-2.5">
+                      <Link
+                        to="/profile"
+                        search={{ pubkey: reply.author.pubkey }}
+                        className="shrink-0"
+                      >
+                        {reply.author.picture ? (
+                          <img
+                            src={reply.author.picture}
+                            alt=""
+                            className="size-8 rounded-full object-cover ring-1 ring-black/5"
+                          />
+                        ) : (
+                          <AvatarTile seed={rName} size={32} />
+                        )}
+                      </Link>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                          <Link
+                            to="/profile"
+                            search={{ pubkey: reply.author.pubkey }}
+                            className="truncate text-[12.5px] font-semibold text-zinc-900 hover:underline"
+                          >
+                            {rName}
+                          </Link>
+                          <span className="text-[11px] text-zinc-400">
+                            {reply.author.handle} · {timeAgo(reply.createdAt)}
+                          </span>
+                        </div>
+                        {replyText && <PostContent content={replyText} />}
+                        {!replyText && !rImages.length && reply.content && (
+                          <p className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-zinc-700 [overflow-wrap:anywhere]">
+                            {reply.content}
+                          </p>
+                        )}
+                        {rImages.length > 0 && (
+                          <div className="mt-2 overflow-hidden rounded-lg ring-1 ring-black/5">
+                            <img
+                              src={rImages[0]}
+                              alt=""
+                              loading="lazy"
+                              className="max-h-56 w-full object-cover"
+                              onError={() =>
+                                setFailedImages((prev) => new Set(prev).add(rImages[0]))
+                              }
+                            />
+                          </div>
+                        )}
+                        <div className="mt-2 flex items-center gap-3 text-[11px] text-zinc-500">
+                          <span className="inline-flex items-center gap-1">
+                            <Heart className="size-3" /> {compactNumber(reply.counts.reactions)}
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <MessageCircle className="size-3" />{" "}
+                            {compactNumber(reply.counts.replies)}
+                          </span>
+                          <button
+                            onClick={() =>
+                              ui.openCompose({
+                                mode: "reply",
+                                replyTo: reply.author.handle,
+                                replyToEvent: reply.event,
+                              })
+                            }
+                            className="font-medium hover:text-zinc-800"
+                          >
+                            Reply
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      )}
     </article>
   );
 }

@@ -31,13 +31,14 @@ export const Route = createFileRoute("/")({
       { property: "og:type", content: "website" },
     ],
   }),
+  ssr: false,
   component: Home,
 });
 
 type Tab = "for-you" | "following";
 const TABS: { id: Tab; label: string }[] = [
   { id: "following", label: "Following" },
-  { id: "for-you", label: "For you" }
+  { id: "for-you", label: "For you" },
 ];
 
 function Home() {

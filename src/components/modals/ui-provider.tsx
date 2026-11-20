@@ -18,6 +18,7 @@ import {
   normalizePubkey,
   parseProfilePointer,
   pubkeyToNpub,
+  searchProfiles,
   shortNpub,
 } from "@/lib/nostr/profiles";
 import { addRelay, getCustomRelays, removeRelay } from "@/lib/nostr/relays";
@@ -977,38 +978,42 @@ function ComposeModal({
                 )}
               </>
             ) : (
-              <div className="rounded-xl bg-amber-50/70 p-3 ring-1 ring-amber-100">
-                <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-amber-900">
-                  <Lock className="size-3.5" /> Members-only posts need the Crays badge
-                </p>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-amber-800/80">
-                  The Crays badge is {formatUsd(CREATOR_PASS_USD)} / month and lets you sell
-                  memberships and single-post unlocks with Lightning.
-                </p>
-                <button
-                  onClick={() => {
-                    onClose();
-                    ui.openUpgrade();
-                  }}
-                  className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-3 py-1.5 text-[11.5px] font-semibold text-white transition-colors hover:bg-amber-600"
-                >
-                  <Crown className="size-3.5" /> Get Crays badge
-                </button>
-              </div>
+              options.mode !== "reply" && (
+                <div className="rounded-xl bg-amber-50/70 p-3 ring-1 ring-amber-100">
+                  <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-amber-900">
+                    <Lock className="size-3.5" /> Members-only posts need the Crays badge
+                  </p>
+                  <p className="mt-1 text-[11.5px] leading-relaxed text-amber-800/80">
+                    The Crays badge is {formatUsd(CREATOR_PASS_USD)} / month and lets you sell
+                    memberships and single-post unlocks with Lightning.
+                  </p>
+                  <button
+                    onClick={() => {
+                      onClose();
+                      ui.openUpgrade();
+                    }}
+                    className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-3 py-1.5 text-[11.5px] font-semibold text-white transition-colors hover:bg-amber-600"
+                  >
+                    <Crown className="size-3.5" /> Get Crays badge
+                  </button>
+                </div>
+              )
             )}
 
-            <ToggleRow
-              icon={<AlertTriangle className="size-4 text-rose-600" />}
-              title="Sensitive content"
-              hint={
-                sensitive
-                  ? "Media will be blurred until viewers tap to reveal."
-                  : "Turn on if this post contains adult, graphic or shocking media."
-              }
-              tone="rose"
-              on={sensitive}
-              onToggle={() => setSensitive((v) => !v)}
-            />
+            {options.mode !== "reply" && (
+              <ToggleRow
+                icon={<AlertTriangle className="size-4 text-rose-600" />}
+                title="Sensitive content"
+                hint={
+                  sensitive
+                    ? "Media will be blurred until viewers tap to reveal."
+                    : "Turn on if this post contains adult, graphic or shocking media."
+                }
+                tone="rose"
+                on={sensitive}
+                onToggle={() => setSensitive((v) => !v)}
+              />
+            )}
             {sensitive && (
               <div className="space-y-2 rounded-xl bg-rose-50/60 p-3 ring-1 ring-rose-100">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-rose-700">
@@ -3196,6 +3201,17 @@ function LogoutConfirm({
 }
 
 // ---------- Command palette ----------
+function formatFollowerCount(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(/\.0$/, "")}M`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1).replace(/\.0$/, "")}K`;
+  }
+  return String(value);
+}
+
 function CommandPalette({
   open,
   onOpenChange,
@@ -3206,97 +3222,202 @@ function CommandPalette({
   const navigate = useNavigate();
   const ui = useUI();
   const [query, setQuery] = useState("");
+  const [people, setPeople] = useState<Profile[]>([]);
+  const [peopleLoading, setPeopleLoading] = useState(false);
   const pointer = useMemo(() => parseProfilePointer(query), [query]);
+  const trimmedQuery = query.trim();
+  const canSearchPeople = !pointer && trimmedQuery.length >= 2;
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      setPeople([]);
+      setPeopleLoading(false);
+      return;
+    }
+    setQuery("");
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !canSearchPeople) {
+      setPeople([]);
+      setPeopleLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setPeopleLoading(true);
+      searchProfiles(trimmedQuery, {
+        limit: 15,
+        // Primal's cache usually answers in a few hundred ms; show those
+        // results immediately instead of waiting for slower relays.
+        onPartial: (results) => {
+          if (cancelled) return;
+          setPeople(results);
+          setPeopleLoading(false);
+        },
+      })
+        .then((results) => {
+          if (!cancelled) setPeople(results);
+        })
+        .catch(() => {
+          // Keep any partial (cache) results on failure.
+        })
+        .finally(() => {
+          if (!cancelled) setPeopleLoading(false);
+        });
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [open, canSearchPeople, trimmedQuery]);
+
   const go = (to: string) => {
     onOpenChange(false);
     navigate({ to });
   };
-  useEffect(() => {
-    if (open) setQuery("");
-  }, [open]);
+
+  const openProfile = (pubkey: string, relays?: string[]) => {
+    onOpenChange(false);
+    navigate({
+      to: "/profile",
+      search: {
+        pubkey,
+        relays: relays && relays.length > 0 ? relays.join(",") : undefined,
+      },
+    });
+  };
+
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
+    <CommandDialog open={open} onOpenChange={onOpenChange} shouldFilter={!canSearchPeople}>
       <CommandInput
         value={query}
         onValueChange={setQuery}
-        placeholder="Search posts, creators, or paste an npub / nprofile…"
+        placeholder="Search people by name, or paste an npub / nprofile…"
       />
       <CommandList>
-        <CommandEmpty>No results.</CommandEmpty>
+        <CommandEmpty>{peopleLoading ? "Searching people…" : "No results."}</CommandEmpty>
+
         {pointer && (
           <CommandGroup heading="Open profile">
             <CommandItem
               value={`profile ${pointer.pubkey} ${query}`}
-              onSelect={() => {
-                onOpenChange(false);
-                navigate({
-                  to: "/profile",
-                  search: {
-                    pubkey: pointer.pubkey,
-                    relays: pointer.relays.length > 0 ? pointer.relays.join(",") : undefined,
-                  },
-                });
-              }}
+              onSelect={() => openProfile(pointer.pubkey, pointer.relays)}
             >
               <User className="size-4" /> View @{shortNpub(pointer.pubkey)}
             </CommandItem>
           </CommandGroup>
         )}
-        <CommandGroup heading="Navigate">
-          <CommandItem onSelect={() => go("/")}>
-            <Home className="size-4" /> Home
-          </CommandItem>
-          <CommandItem onSelect={() => go("/discover")}>
-            <Compass className="size-4" /> Discover
-          </CommandItem>
-          {ui.user && (
-            <>
-              <CommandItem onSelect={() => go("/following")}>
-                <Users className="size-4" /> Following
+
+        {canSearchPeople && (
+          <CommandGroup heading="People">
+            {peopleLoading && people.length === 0 && (
+              <CommandItem value="searching people" disabled>
+                <Loader2 className="size-4 animate-spin" /> Searching people…
               </CommandItem>
-              <CommandItem onSelect={() => go("/messages")}>
-                <MessageCircle className="size-4" /> Messages
+            )}
+            {people.map((profile) => {
+              const name = profile.displayName || profile.name || shortNpub(profile.pubkey);
+              const handle = profile.nip05 ? profile.nip05 : shortNpub(profile.pubkey);
+              return (
+                <CommandItem
+                  key={profile.pubkey}
+                  value={`person ${profile.pubkey} ${name} ${profile.name} ${profile.nip05 ?? ""}`}
+                  onSelect={() => openProfile(profile.pubkey)}
+                >
+                  {profile.picture ? (
+                    <img
+                      src={profile.picture}
+                      alt=""
+                      className="size-6 rounded-full object-cover ring-1 ring-black/5"
+                    />
+                  ) : (
+                    <span className="grid size-6 place-items-center rounded-full bg-zinc-100 text-[10px] font-semibold text-zinc-600">
+                      {name.slice(0, 1).toUpperCase()}
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium text-zinc-900">{name}</p>
+                    <p className="truncate text-[11px] text-zinc-500">{handle}</p>
+                  </div>
+                  {typeof profile.followers === "number" && (
+                    <span className="ml-auto shrink-0 text-[10.5px] font-medium tabular-nums text-zinc-400">
+                      {formatFollowerCount(profile.followers)} followers
+                    </span>
+                  )}
+                </CommandItem>
+              );
+            })}
+            {!peopleLoading && people.length === 0 && (
+              <CommandItem value="no people" disabled>
+                <User className="size-4" /> No matching people found
               </CommandItem>
-              <CommandItem onSelect={() => go("/notifications")}>
-                <Bell className="size-4" /> Notifications
+            )}
+          </CommandGroup>
+        )}
+
+        {!canSearchPeople && (
+          <>
+            <CommandGroup heading="Navigate">
+              <CommandItem onSelect={() => go("/")}>
+                <Home className="size-4" /> Home
               </CommandItem>
-              <CommandItem onSelect={() => go("/bookmarks")}>
-                <Bookmark className="size-4" /> Bookmarks
+              <CommandItem onSelect={() => go("/discover")}>
+                <Compass className="size-4" /> Discover
               </CommandItem>
-              <CommandItem onSelect={() => go("/premium")}>
-                <Crown className="size-4" /> Creator tools
+              {ui.user && (
+                <>
+                  <CommandItem onSelect={() => go("/following")}>
+                    <Users className="size-4" /> Following
+                  </CommandItem>
+                  <CommandItem onSelect={() => go("/messages")}>
+                    <MessageCircle className="size-4" /> Messages
+                  </CommandItem>
+                  <CommandItem onSelect={() => go("/notifications")}>
+                    <Bell className="size-4" /> Notifications
+                  </CommandItem>
+                  <CommandItem onSelect={() => go("/bookmarks")}>
+                    <Bookmark className="size-4" /> Bookmarks
+                  </CommandItem>
+                  <CommandItem onSelect={() => go("/premium")}>
+                    <Crown className="size-4" /> Creator tools
+                  </CommandItem>
+                  <CommandItem onSelect={() => go("/wallet")}>
+                    <Wallet className="size-4" /> Wallet
+                  </CommandItem>
+                  <CommandItem onSelect={() => go("/profile")}>
+                    <User className="size-4" /> Profile
+                  </CommandItem>
+                  <CommandItem onSelect={() => go("/settings")}>
+                    <Cog className="size-4" /> Settings
+                  </CommandItem>
+                </>
+              )}
+            </CommandGroup>
+            <CommandSeparator />
+            <CommandGroup heading="Actions">
+              <CommandItem
+                onSelect={() => {
+                  onOpenChange(false);
+                  ui.openCompose({ mode: "post" });
+                }}
+              >
+                <Pencil className="size-4" /> Write a post
               </CommandItem>
-              <CommandItem onSelect={() => go("/wallet")}>
-                <Wallet className="size-4" /> Wallet
+              <CommandItem
+                onSelect={() => {
+                  onOpenChange(false);
+                  ui.openAuth({ intent: "switch accounts" });
+                }}
+              >
+                <LogIn className="size-4" /> Sign in / Create
               </CommandItem>
-              <CommandItem onSelect={() => go("/profile")}>
-                <User className="size-4" /> Profile
-              </CommandItem>
-              <CommandItem onSelect={() => go("/settings")}>
-                <Cog className="size-4" /> Settings
-              </CommandItem>
-            </>
-          )}
-        </CommandGroup>
-        <CommandSeparator />
-        <CommandGroup heading="Actions">
-          <CommandItem
-            onSelect={() => {
-              onOpenChange(false);
-              ui.openCompose({ mode: "post" });
-            }}
-          >
-            <Pencil className="size-4" /> Write a post
-          </CommandItem>
-          <CommandItem
-            onSelect={() => {
-              onOpenChange(false);
-              ui.openAuth({ intent: "switch accounts" });
-            }}
-          >
-            <LogIn className="size-4" /> Sign in / Create
-          </CommandItem>
-        </CommandGroup>
+            </CommandGroup>
+          </>
+        )}
       </CommandList>
     </CommandDialog>
   );

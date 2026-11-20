@@ -197,10 +197,12 @@ async function runQuery(relays: string[], filter: Filter, timeout: number): Prom
       resolve(dedupeEvents(chunks.flat()));
     };
 
-    // Wait for the two fastest relays instead of the slowest one. Remaining
-    // relays get a short grace period to add anything they have.
+    const isSearch = typeof filter.search === "string" && filter.search.trim().length > 0;
+    // NIP-50 search results come from a subset of relays and can be slower than
+    // relays that quickly return nothing. For search, wait for all relays or the
+    // deadline so perfect display-name matches aren't missed.
     const needed = Math.min(2, relays.length);
-    const deadline = setTimeout(finish, timeout + 250);
+    const deadline = setTimeout(finish, timeout + (isSearch ? 500 : 250));
     timers.add(deadline);
 
     const maybeFinish = () => {
@@ -209,6 +211,7 @@ async function runQuery(relays: string[], filter: Filter, timeout: number): Prom
         finish();
         return;
       }
+      if (isSearch) return;
       if (finished >= needed && !grace) {
         grace = setTimeout(finish, 150);
       }
@@ -217,7 +220,10 @@ async function runQuery(relays: string[], filter: Filter, timeout: number): Prom
     for (const url of relays) {
       // Don't wait for every socket: a dead relay must not hold the UI. Each
       // relay starts its own subscription as soon as it connects.
-      void connect(url).then((relay) => {
+      const relayPromise = isSearch
+        ? pool.ensureRelay(url, { connectionTimeout: 5000 }).catch(() => null)
+        : connect(url);
+      void relayPromise.then((relay) => {
         if (settled) return;
         if (!relay) {
           failed += 1;

@@ -273,6 +273,37 @@ export async function fetchNoteById(id: string): Promise<FeedNote | null> {
   return notes[0] ?? null;
 }
 
+/** Fetch replies/comments that reference a note, oldest first. */
+export async function fetchReplies(
+  noteId: string,
+  options?: { timeout?: number },
+): Promise<FeedNote[]> {
+  const events = await queryEvents(
+    { kinds: [1], "#e": [noteId], limit: 200 },
+    { timeout: options?.timeout ?? 5000 },
+  );
+  const replies = events.filter(
+    (event) => event.id !== noteId && event.tags.some((t) => t[0] === "e" && t[1] === noteId),
+  );
+  if (replies.length === 0) return [];
+
+  const [profiles, counts] = await Promise.all([
+    fetchProfiles(
+      replies.map((e) => e.pubkey),
+      getRelayList(),
+    ),
+    enrichCounts(replies.map((e) => e.id)),
+  ]);
+
+  return replies
+    .map((event) => {
+      const note = noteFromEvent(event, profiles.get(event.pubkey));
+      note.counts = counts.get(event.id) ?? note.counts;
+      return note;
+    })
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
 export type PublishNoteInput = {
   content: string;
   replyTo?: NostrEvent;
