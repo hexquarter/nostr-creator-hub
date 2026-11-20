@@ -304,6 +304,44 @@ export async function fetchReplies(
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
+export type NoteLike = {
+  profile: Profile;
+  /** When the reactor liked the note, in unix seconds. */
+  reactedAt: number;
+};
+
+/**
+ * Fetch everyone who reacted (liked) to a note, most recent reaction first.
+ * Reactions are deduplicated per reactor and the note's author is skipped.
+ */
+export async function fetchNoteLikes(
+  event: NostrEvent,
+  options?: { timeout?: number },
+): Promise<NoteLike[]> {
+  const reactions = await queryEvents(
+    { kinds: [7], "#e": [event.id], limit: 500 },
+    { timeout: options?.timeout ?? 4000 },
+  );
+  const reactors = new Map<string, NostrEvent>();
+  for (const reaction of reactions) {
+    if (reaction.pubkey === event.pubkey) continue;
+    const existing = reactors.get(reaction.pubkey);
+    if (!existing || reaction.created_at > existing.created_at) {
+      reactors.set(reaction.pubkey, reaction);
+    }
+  }
+  const liked = Array.from(reactors.values());
+  if (liked.length === 0) return [];
+
+  const profiles = await fetchProfiles(liked.map((reaction) => reaction.pubkey));
+  return liked
+    .map((reaction) => ({
+      profile: profiles.get(reaction.pubkey) ?? emptyProfile(reaction.pubkey),
+      reactedAt: reaction.created_at,
+    }))
+    .sort((a, b) => b.reactedAt - a.reactedAt);
+}
+
 export type PublishNoteInput = {
   content: string;
   replyTo?: NostrEvent;

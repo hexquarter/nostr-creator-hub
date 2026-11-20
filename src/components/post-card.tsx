@@ -17,15 +17,22 @@ import {
   Heart,
   Loader2,
 } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { nip19, type NostrEvent } from "nostr-tools";
 import { AvatarTile } from "./avatar-tile";
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { useUI } from "./modals/ui-provider";
 import { useNostr } from "./nostr-provider";
 import { compactNumber, timeAgo } from "@/lib/format";
-import { contentWithoutImages, fetchReplies, type FeedNote } from "@/lib/nostr/social";
+import {
+  contentWithoutImages,
+  fetchNoteLikes,
+  fetchReplies,
+  type FeedNote,
+  type NoteLike,
+} from "@/lib/nostr/social";
 import { shortNpub } from "@/lib/nostr/profiles";
 import {
   isBadgeActive,
@@ -106,6 +113,8 @@ export function PostCard({ post }: { post: Post }) {
   const [reposted, setReposted] = useState(false);
   const [liked, setLiked] = useState(false);
   const [likeDelta, setLikeDelta] = useState(0);
+  const [likers, setLikers] = useState<NoteLike[]>([]);
+  const [likersLoading, setLikersLoading] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<string>>(() => new Set());
   const [showThread, setShowThread] = useState(false);
@@ -207,6 +216,84 @@ export function PostCard({ post }: { post: Post }) {
       toast.error(error instanceof Error ? error.message : "Couldn't react to that post.");
     }
   };
+
+  const likeCount = post.reactions + likeDelta;
+
+  const navigate = useNavigate();
+  const openProfile = (pubkey: string) => {
+    navigate({
+      to: "/profile",
+      search: { pubkey },
+    });
+  };
+
+  useEffect(() => {
+    if (!post.event) {
+      setLikers([]);
+      return;
+    }
+    let cancelled = false;
+    setLikersLoading(true);
+    fetchNoteLikes(post.event)
+      .then((list) => {
+        if (!cancelled) setLikers(list);
+      })
+      .catch(() => {
+        if (!cancelled) setLikers([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLikersLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [post.event]);
+
+  const likeContent =
+    post.event && likeCount > 0 ? (
+      <div className="space-y-2">
+        <p className="px-1 text-[10.5px] font-semibold uppercase tracking-wider text-zinc-400">
+          Liked by
+        </p>
+        {likersLoading ? (
+          <p className="flex items-center gap-2 px-1 py-2 text-[12px] text-zinc-400">
+            <Loader2 className="size-3.5 animate-spin" /> Loading likes…
+          </p>
+        ) : likers.length === 0 ? (
+          <p className="px-1 py-2 text-[12px] text-zinc-400">No likes yet.</p>
+        ) : (
+          <ul className="max-h-64 divide-y divide-zinc-100 overflow-y-auto">
+            {likers.map(({ profile, reactedAt }) => {
+              const name = profile.displayName || profile.name || profile.handle;
+              return (
+                <li key={profile.pubkey}>
+                  <button
+                    type="button"
+                    onClick={() => openProfile(profile.pubkey)}
+                    className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-zinc-50"
+                  >
+                    {profile.picture ? (
+                      <img
+                        src={profile.picture}
+                        alt=""
+                        className="size-7 rounded-full object-cover ring-1 ring-black/5"
+                      />
+                    ) : (
+                      <AvatarTile seed={name} size={28} />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[12px] font-semibold text-zinc-900">{name}</p>
+                      <p className="truncate text-[11px] text-zinc-400">{profile.handle}</p>
+                    </div>
+                    <span className="shrink-0 text-[10px] text-zinc-400">{timeAgo(reactedAt)}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    ) : undefined;
 
   const toggleThread = async () => {
     const next = !showThread;
@@ -451,11 +538,12 @@ export function PostCard({ post }: { post: Post }) {
         />
         <Action
           icon={Heart}
-          label={String(post.reactions + likeDelta)}
+          label={String(likeCount)}
           hover="hover:text-rose-500"
           active={liked}
           activeClass="text-rose-500"
           onClick={() => void doLike()}
+          content={likeContent}
         />
         <Action
           icon={Zap}
@@ -612,6 +700,7 @@ function Action({
   onClick,
   active,
   activeClass,
+  content,
 }: {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   label?: string;
@@ -620,8 +709,10 @@ function Action({
   onClick?: () => void;
   active?: boolean;
   activeClass?: string;
+  /** Optional hover card content — e.g. the list of profiles who liked. */
+  content?: React.ReactNode;
 }) {
-  return (
+  const action = (
     <button
       onClick={onClick}
       className={`group flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[12px] font-medium transition-colors ${
@@ -634,6 +725,19 @@ function Action({
       />
       {label && <span>{label}</span>}
     </button>
+  );
+
+  if (content === undefined) {
+    return action;
+  }
+
+  return (
+    <HoverCard openDelay={300}>
+      <HoverCardTrigger asChild>{action}</HoverCardTrigger>
+      <HoverCardContent align="start" sideOffset={8} className="w-64 max-w-[18rem] rounded-xl p-2">
+        {content}
+      </HoverCardContent>
+    </HoverCard>
   );
 }
 
