@@ -53,14 +53,6 @@ function Bookmarks() {
     <PageShell
       title="Bookmarks"
       subtitle="Saved privately to your Nostr bookmarks list."
-      actions={
-        <button
-          onClick={() => ui.openAuth({ intent: "bookmark posts" })}
-          className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-black"
-        >
-          <FolderPlus className="size-3.5" /> How bookmarks work
-        </button>
-      }
     >
       <section className="flex items-center gap-3 overflow-hidden rounded-2xl bg-white p-4 shadow-card ring-1 ring-black/5">
         <span className="grid size-10 place-items-center rounded-xl bg-gradient-to-br from-brand to-violet-500 text-white">
@@ -69,7 +61,7 @@ function Bookmarks() {
         <div className="min-w-0 flex-1">
           <p className="text-[12.5px] font-semibold text-zinc-900">All bookmarks</p>
           <p className="text-[11px] text-zinc-500">
-            {nostr.bookmarks.length} saved · stored as an encrypted kind-10003 list
+            {nostr.bookmarks.length} saved
           </p>
         </div>
       </section>
@@ -85,13 +77,6 @@ function Bookmarks() {
         <p className="flex items-center justify-center gap-2 py-10 text-[12.5px] text-zinc-400">
           <Loader2 className="size-4 animate-spin" /> Loading bookmarks…
         </p>
-      ) : notes.length === 0 ? (
-        <Empty
-          title="No bookmarks yet"
-          body="Tap the bookmark icon on any note and it lands here for later."
-          action="Browse the feed"
-          onAction={() => ui.openCompose({ mode: "post" })}
-        />
       ) : (
         <div className="space-y-5">
           {notes.map((note) => (
