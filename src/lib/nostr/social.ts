@@ -308,12 +308,39 @@ export type PublishNoteInput = {
   content: string;
   replyTo?: NostrEvent;
   rootId?: string;
+  /** Image URLs. They are also appended to the note text so every client shows them. */
   images?: string[];
   contentWarning?: string;
   tags?: string[][];
   createdAt?: number;
   kind?: number;
 };
+
+/**
+ * Most clients (Primal, njump, Damus, …) render media by scanning the note text
+ * for URLs. `imeta` (NIP-92) is only metadata *about* those URLs, so an image
+ * that exists solely as an `imeta` tag stays invisible everywhere except the
+ * client that wrote it.
+ */
+function appendMediaToContent(content: string, images: string[]): string {
+  const missing = images.filter((url) => !content.includes(url));
+  if (missing.length === 0) return content;
+  return [content.trim(), ...missing].filter(Boolean).join("\n\n");
+}
+
+function mimeFromUrl(url: string): string | undefined {
+  const match = /\.(png|jpe?g|gif|webp|avif|svg)(?:\?|#|$)/i.exec(url);
+  if (!match) return undefined;
+  const ext = match[1].toLowerCase();
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "svg") return "image/svg+xml";
+  return `image/${ext}`;
+}
+
+function imetaTag(url: string): string[] {
+  const mime = mimeFromUrl(url);
+  return mime ? ["imeta", `url ${url}`, `m ${mime}`] : ["imeta", `url ${url}`];
+}
 
 export async function publishNote(signer: AppSigner, input: PublishNoteInput): Promise<NostrEvent> {
   const tags: string[][] = [...(input.tags ?? [])];
@@ -331,14 +358,15 @@ export async function publishNote(signer: AppSigner, input: PublishNoteInput): P
   }
 
   if (input.contentWarning) tags.push(["content-warning", input.contentWarning]);
-  for (const url of input.images ?? []) {
-    tags.push(["imeta", `url ${url}`]);
+  const images = (input.images ?? []).filter(Boolean);
+  for (const url of images) {
+    tags.push(imetaTag(url));
   }
 
   const template: EventTemplate = {
     kind: input.kind ?? 1,
     created_at: input.createdAt ?? Math.floor(Date.now() / 1000),
-    content: input.content,
+    content: appendMediaToContent(input.content, images),
     tags,
   };
   const signedEvent = await signer.signEvent(template);
