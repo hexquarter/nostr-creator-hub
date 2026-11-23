@@ -239,8 +239,46 @@ async function claimMatureDeposits(sdk: BreezSdk) {
 
 export async function getBreezBalance(): Promise<number> {
   const sdk = await getBreezSdk();
+  // Claim any MoonPay deposit that has matured since the last visit, so the
+  // balance reflects funds the user already paid for.
+  await claimMatureDeposits(sdk);
   const info = await sdk.getInfo({ ensureSynced: true });
   return info.balanceSats;
+}
+
+/**
+ * True when a Breez wallet seed exists locally and the SDK is configured.
+ * Deliberately does not import the SDK — checking localStorage is cheap, so
+ * the UI can decide whether a wallet exists before paying the 12 MB import.
+ */
+export function hasBreezWallet(): boolean {
+  return BREEZ_MOONPAY_CONFIGURED && readMnemonic() !== null;
+}
+
+/**
+ * The sats encoded in a BOLT-11 human-readable part (`lnbc10u1…`), or null
+ * when the invoice is amountless. Spark's `prepareSendPayment` needs an
+ * explicit amount, so callers must supply one for amountless invoices.
+ */
+export function bolt11AmountSats(invoice: string): number | null {
+  const match = invoice
+    .trim()
+    .toLowerCase()
+    .match(/^ln(bc|tb)(\d+)([munp])?1/);
+  if (!match) return null;
+  const value = Number(match[2]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const millisats =
+    match[3] === "m"
+      ? value * 100_000_000
+      : match[3] === "u"
+        ? value * 100_000
+        : match[3] === "n"
+          ? value * 100
+          : match[3] === "p"
+            ? value / 10
+            : value * 100_000_000;
+  return Math.round(millisats / 1000);
 }
 
 /**

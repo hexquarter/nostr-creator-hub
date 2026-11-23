@@ -72,6 +72,8 @@ import {
   type LightningAddressSource,
 } from "@/lib/nostr/lightning";
 import { requestZapInvoice } from "@/lib/nostr/zaps";
+import { hasBreezWallet, payLightningInvoice } from "@/lib/payments/breez-wallet";
+import { payFromNpubcash } from "@/lib/payments/cashu-wallet";
 import { setPurchaseOwner, syncCreatorPurchases } from "@/lib/nostr/badges";
 import {
   deliverNewPostKeys,
@@ -131,6 +133,9 @@ type NostrContextValue = {
   publish: (input: PublishNoteInput) => Promise<NostrEvent>;
   /** Sign and publish any event template (profile, badge proof, …). */
   signAndPublish: (template: EventTemplate) => Promise<NostrEvent>;
+  /** Sign any event template with the account's key, without publishing
+   *  (used for authenticated HTTP APIs such as NIP-98). */
+  signTemplate: (template: EventTemplate) => Promise<NostrEvent>;
   uploadMedia: (bytes: Uint8Array, mime: string) => Promise<string>;
   uploadFile: (file: File) => Promise<string>;
   react: (target: NostrEvent, content?: string) => Promise<void>;
@@ -592,6 +597,11 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     [requireSigner],
   );
 
+  const signTemplate = useCallback(
+    (template: EventTemplate) => requireSigner().signEvent(template),
+    [requireSigner],
+  );
+
   const uploadMedia = useCallback(
     async (bytes: Uint8Array, mime: string) => {
       const result = await uploadBlob(bytes, mime, requireSigner());
@@ -754,17 +764,34 @@ export function NostrProvider({ children }: { children: ReactNode }) {
       comment?: string;
       note?: NostrEvent | null;
     }) => {
-      const client = walletRef.current;
-      if (!client) throw new Error("Connect a Lightning wallet first.");
       const invoice = await requestZapInvoice({
         ...input,
         signer: signerRef.current,
       });
-      const payment = await client.payInvoice(invoice.invoice);
-      void refreshBalance();
-      return { preimage: payment.preimage, invoice: invoice.invoice };
+      const client = walletRef.current;
+      if (client) {
+        const payment = await client.payInvoice(invoice.invoice);
+        void refreshBalance();
+        return { preimage: payment.preimage, invoice: invoice.invoice };
+      }
+      // No NIP-47 wallet connected: the browser's Breez wallet (card top-ups)
+      // pays the zap instead.
+      if (hasBreezWallet()) {
+        await payLightningInvoice({
+          invoice: invoice.invoice,
+          amountSats: input.amountSats,
+          idempotencyKey: `crays-zap:${randomHex(16)}`,
+        });
+        return { invoice: invoice.invoice };
+      }
+      // Last resort: melt the account's npub.cash (Cashu) balance.
+      const pubkey = account?.pubkey;
+      const signer = signerRef.current;
+      if (!pubkey || !signer) throw new Error("Connect a Lightning wallet first.");
+      await payFromNpubcash(pubkey, invoice.invoice, signer);
+      return { invoice: invoice.invoice };
     },
-    [refreshBalance],
+    [refreshBalance, account?.pubkey],
   );
 
   const canDeliverKeys = useCallback(() => Boolean(signerRef.current?.nip44Encrypt), []);
@@ -845,6 +872,7 @@ export function NostrProvider({ children }: { children: ReactNode }) {
       updateProfile,
       publish,
       signAndPublish,
+      signTemplate,
       uploadMedia,
       uploadFile,
       react,
@@ -883,6 +911,7 @@ export function NostrProvider({ children }: { children: ReactNode }) {
       updateProfile,
       publish,
       signAndPublish,
+      signTemplate,
       uploadMedia,
       uploadFile,
       react,

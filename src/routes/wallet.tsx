@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
+import { useBreez } from "@/components/breez-provider";
+import { useNpubcash } from "@/components/npubcash-provider";
 import { useBtcPrice, formatUsd, formatSats } from "@/lib/nostr/price";
 import type { NwcTransaction } from "@/lib/nostr/nwc";
 import { timeAgo } from "@/lib/format";
@@ -35,6 +37,8 @@ export const Route = createFileRoute("/wallet")({
 function WalletPage() {
   const ui = useUI();
   const nostr = useNostr();
+  const breez = useBreez();
+  const npubcash = useNpubcash();
   const price = useBtcPrice();
   const [transactions, setTransactions] = useState<NwcTransaction[]>([]);
   const [loadingTx, setLoadingTx] = useState(false);
@@ -46,6 +50,12 @@ function WalletPage() {
   // separate wallet connection.
   const address = wallet.address;
   const hostedAddress = wallet.addressSource === "hosted";
+  // The browser's Breez wallet (funded by card top-ups) backs sending and
+  // shows its balance whenever no NIP-47 wallet is connected.
+  const breezActive = !wallet.connected && breez.available;
+  // The npub.cash wallet (Cashu proofs minted from received payments) backs
+  // the address itself: it is where received sats land.
+  const cashuActive = !wallet.connected && !breez.available && npubcash.available;
 
   const saveAddress = async () => {
     if (!address) return;
@@ -75,6 +85,27 @@ function WalletPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallet.connected]);
 
+  // A connected wallet whose balance failed during restore (relay timeouts do
+  // happen) should retry once this page opens, instead of showing "—".
+  useEffect(() => {
+    if (!wallet.connected || balance != null) return;
+    void nostr.refreshBalance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet.connected]);
+
+  // Open the browser's Breez wallet so its balance shows up here. Cheap no-op
+  // when no seed exists locally.
+  useEffect(() => {
+    void breez.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Collect any newly paid npub.cash quotes and mint them into the balance.
+  useEffect(() => {
+    void npubcash.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nostr.account?.pubkey]);
+
   return (
     <PageShell title="Wallet" subtitle="Self-custodial Lightning — your keys, your sats.">
       {/* Balance card */}
@@ -96,18 +127,60 @@ function WalletPage() {
                 <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300">
                   {wallet.alias ?? "Connected"}
                 </span>
+              ) : breezActive ? (
+                <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300">
+                  Crays wallet
+                </span>
               ) : address ? (
                 <span className="rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">
                   {hostedAddress ? "npub.cash" : "Receive-only"}
                 </span>
               ) : null}
             </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <h2 className="text-[40px] font-semibold tracking-tight sm:text-[52px]">
-                {balance == null ? (wallet.loading ? "…" : "—") : balance.toLocaleString()}
+            {wallet.connected ? (
+              <div className="mt-2 flex items-baseline gap-2">
+                <h2 className="text-[40px] font-semibold tracking-tight sm:text-[52px]">
+                  {balance == null ? (wallet.loading ? "…" : "—") : balance.toLocaleString()}
+                </h2>
+                <span className="text-[14px] font-medium text-zinc-400">sats</span>
+              </div>
+            ) : breezActive ? (
+              <div className="mt-2 flex items-baseline gap-2">
+                <h2 className="text-[40px] font-semibold tracking-tight sm:text-[52px]">
+                  {breez.balanceSats == null
+                    ? breez.loading
+                      ? "…"
+                      : "—"
+                    : breez.balanceSats.toLocaleString()}
+                </h2>
+                <span className="text-[14px] font-medium text-zinc-400">sats</span>
+              </div>
+            ) : cashuActive ? (
+              <div className="mt-2 flex items-baseline gap-2">
+                <h2 className="text-[40px] font-semibold tracking-tight sm:text-[52px]">
+                  {npubcash.balanceSats == null
+                    ? npubcash.loading
+                      ? "…"
+                      : "—"
+                    : npubcash.balanceSats.toLocaleString()}
+                </h2>
+                <span className="text-[14px] font-medium text-zinc-400">sats</span>
+              </div>
+            ) : address ? (
+              // Without a NIP-47 connection and without collected Cashu proofs,
+              // the sats live in an external wallet — show where instead of a
+              // balance-shaped dash.
+              <h2 className="mt-2 text-[24px] font-semibold tracking-tight sm:text-[30px]">
+                {hostedAddress
+                  ? "Held at npub.cash"
+                  : `Held in your ${address.split("@")[1] ?? "external"} wallet`}
               </h2>
-              <span className="text-[14px] font-medium text-zinc-400">sats</span>
-            </div>
+            ) : (
+              <div className="mt-2 flex items-baseline gap-2">
+                <h2 className="text-[40px] font-semibold tracking-tight sm:text-[52px]">—</h2>
+                <span className="text-[14px] font-medium text-zinc-400">sats</span>
+              </div>
+            )}
             <p className="mt-1 text-[13px] text-zinc-400">
               {wallet.connected ? (
                 <>
@@ -119,11 +192,35 @@ function WalletPage() {
                   </span>{" "}
                   {price ? "USD · live pricestr feed" : "· waiting for the BTC price"}
                 </>
+              ) : cashuActive ? (
+                <>
+                  ≈{" "}
+                  <span className="text-zinc-200">
+                    {formatUsd(
+                      npubcash.balanceSats != null && price
+                        ? (npubcash.balanceSats / 100_000_000) * price.usd
+                        : null,
+                    )}
+                  </span>{" "}
+                  USD · your npub.cash wallet
+                </>
+              ) : breezActive ? (
+                <>
+                  ≈{" "}
+                  <span className="text-zinc-200">
+                    {formatUsd(
+                      breez.balanceSats != null && price
+                        ? (breez.balanceSats / 100_000_000) * price.usd
+                        : null,
+                    )}
+                  </span>{" "}
+                  USD · self-custodial wallet in this browser
+                </>
               ) : address ? (
                 hostedAddress ? (
                   "Receiving at your npub.cash address — claim sats with your Nostr key."
                 ) : (
-                  "Receiving is ready — add a wallet to send sats."
+                  "You can receive here now. Connect that wallet with Nostr Wallet Connect to see its balance and send sats."
                 )
               ) : (
                 "Sign in to derive a wallet from your Nostr identity."
@@ -136,6 +233,12 @@ function WalletPage() {
               <Action label="Top up" icon={CreditCard} onClick={ui.openTopUp} />
             </div>
             {wallet.error && <p className="mt-3 text-[11.5px] text-rose-300">{wallet.error}</p>}
+            {breezActive && breez.error && (
+              <p className="mt-3 text-[11.5px] text-rose-300">{breez.error}</p>
+            )}
+            {cashuActive && npubcash.error && (
+              <p className="mt-3 text-[11.5px] text-rose-300">{npubcash.error}</p>
+            )}
           </div>
           <div className="relative ml-auto grid place-items-center rounded-2xl bg-white/5 p-5 ring-1 ring-white/10 backdrop-blur-sm">
             {address ? (
@@ -194,14 +297,24 @@ function WalletPage() {
           value={
             wallet.connected
               ? (wallet.alias ?? "Connected")
-              : address
-                ? hostedAddress
+              : breezActive
+                ? "Crays wallet"
+                : cashuActive
                   ? "npub.cash"
-                  : "Receive-only"
-                : "Not connected"
+                  : address
+                    ? hostedAddress
+                      ? "npub.cash"
+                      : "Receive-only"
+                    : "Not connected"
           }
         />
-        <StatCard label="Network" value={wallet.network ?? "—"} />
+        <StatCard
+          label="Network"
+          value={
+            wallet.network ??
+            (breezActive ? "Spark" : cashuActive ? "Cashu" : address ? "Lightning" : "—")
+          }
+        />
         <StatCard label="Sats / USD" value={price ? formatUsd(price.usd / 100_000_000, 4) : "—"} />
         <StatCard
           label="BTC / USD"
@@ -210,7 +323,7 @@ function WalletPage() {
         />
       </section>
 
-      {!wallet.connected && <WalletConnectCard hasAddress={!!address} />}
+      {!wallet.connected && !breez.available && <WalletConnectCard hasAddress={!!address} />}
 
       {/* Transactions */}
       <section className="overflow-hidden rounded-2xl bg-white shadow-card ring-1 ring-black/5">

@@ -12,6 +12,8 @@ import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
 import type { EventTemplate, NostrEvent } from "nostr-tools";
 import { useNostr } from "@/components/nostr-provider";
+import { useBreez } from "@/components/breez-provider";
+import { useNpubcash } from "@/components/npubcash-provider";
 import type { Profile } from "@/lib/nostr/profiles";
 import {
   fetchProfile,
@@ -51,9 +53,11 @@ import {
 import { hasPasskey, hasWebAuthn } from "@/lib/nostr/passkey";
 import { useBtcPrice, satsToUsd, usdToSats, formatUsd } from "@/lib/nostr/price";
 import { isLightningInvoice, requestPaymentDetails, requestPaymentInvoice } from "@/lib/nostr/zaps";
+import { bolt11AmountSats } from "@/lib/payments/breez-wallet";
 import {
   BREEZ_MOONPAY_CONFIGURED,
   breezErrorMessage,
+  createMoonPayUrl,
   fundingSatsFor,
 } from "@/lib/payments/breez-wallet";
 import {
@@ -528,6 +532,8 @@ function ZapModal({
   options: ZapOptions;
 }) {
   const nostr = useNostr();
+  const breez = useBreez();
+  const npubcash = useNpubcash();
   const price = useBtcPrice();
   const devSettings = useDevPaymentSettings();
   const lightningDisabled = DEV_PAYMENTS_ENABLED && devSettings.disableLightning;
@@ -576,7 +582,12 @@ function ZapModal({
       toast.error("Open the creator's profile to zap them.");
       return;
     }
-    if (!nostr.wallet.connected) {
+    // The zap payment itself branches in nostr.zap: a NIP-47 wallet when one
+    // is connected, the browser's Breez wallet otherwise, then the account's
+    // npub.cash balance.
+    const paysFromBreez = !nostr.wallet.connected && breez.available;
+    const paysFromCashu = !nostr.wallet.connected && !breez.available;
+    if (paysFromCashu && !nostr.account) {
       toast.error("Connect a Lightning wallet first.");
       return;
     }
@@ -588,6 +599,8 @@ function ZapModal({
         comment: note.trim() || undefined,
         note: options.note ?? null,
       });
+      if (paysFromBreez) void breez.refresh();
+      if (paysFromCashu) void npubcash.refresh();
       toast.success(`Zapped ${amount.toLocaleString()} sats ⚡`);
       onClose();
     } catch (error) {
@@ -662,7 +675,7 @@ function ZapModal({
             />
           </Field>
 
-          {!nostr.wallet.connected && (
+          {!nostr.wallet.connected && !breez.available && !nostr.account && (
             <div className="space-y-2 rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200">
               <p className="text-[12px] font-semibold text-zinc-800">Connect a Lightning wallet</p>
               <p className="text-[11.5px] text-zinc-500">
@@ -695,7 +708,12 @@ function ZapModal({
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
           <PrimaryBtn
             className="!bg-amber-500 hover:!bg-amber-600"
-            disabled={lightningDisabled || busy || !profile || !nostr.wallet.connected}
+            disabled={
+              lightningDisabled ||
+              busy ||
+              !profile ||
+              !(nostr.wallet.connected || breez.available || nostr.account)
+            }
             onClick={send}
           >
             {busy ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}
@@ -2242,10 +2260,17 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
 // ---------- Send / Receive / Top-up ----------
 function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const nostr = useNostr();
+  const breez = useBreez();
+  const npubcash = useNpubcash();
   const price = useBtcPrice();
   const [dest, setDest] = useState("");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
+  // Without a NIP-47 connection the browser's Breez wallet pays instead.
+  const nwcSend = nostr.wallet.connected;
+  const breezSend = !nwcSend && breez.available;
+  const cashuSend = !nwcSend && !breezSend && npubcash.available;
+  const canPay = nwcSend || breezSend || cashuSend;
 
   useEffect(() => {
     if (open) {
@@ -2255,7 +2280,12 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
     }
   }, [open]);
 
-  const sats = Number(amount) || 0;
+  // A BOLT-11 invoice carries its own amount; only amountless invoices (and
+  // addresses/LNURL) need the amount input.
+  const invoiceSats = isLightningInvoice(dest) ? bolt11AmountSats(dest) : null;
+  const sats = isLightningInvoice(dest)
+    ? (invoiceSats ?? (Number(amount) || 0))
+    : Number(amount) || 0;
   const usd = formatUsd(satsToUsd(sats, price));
 
   const send = async () => {
@@ -2264,7 +2294,14 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
       const invoice = isLightningInvoice(dest)
         ? dest.trim()
         : await requestPaymentInvoice(dest, sats);
-      await nostr.payInvoice(invoice);
+      if (nwcSend) {
+        await nostr.payInvoice(invoice);
+      } else if (breezSend) {
+        await breez.pay({ invoice, amountSats: sats });
+        void breez.refresh();
+      } else {
+        await npubcash.pay({ invoice, amountSats: sats });
+      }
       toast.success(`Sent ${sats ? `${sats.toLocaleString()} sats` : "payment"}`);
       onClose();
     } catch (error) {
@@ -2282,12 +2319,16 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
             <ArrowUpRight className="size-5" /> Send sats
           </DialogTitle>
           <DialogDescription>
-            {nostr.wallet.connected
+            {nwcSend
               ? `From ${nostr.wallet.alias ?? "your Lightning wallet"}${nostr.wallet.balanceSats != null ? ` · ${nostr.wallet.balanceSats.toLocaleString()} sats` : ""}`
-              : "Connect a Lightning wallet to send payments."}
+              : breezSend
+                ? `From your Crays wallet${breez.balanceSats != null ? ` · ${breez.balanceSats.toLocaleString()} sats` : ""}`
+                : cashuSend
+                  ? `From your npub.cash wallet${npubcash.balanceSats != null ? ` · ${npubcash.balanceSats.toLocaleString()} sats` : ""}`
+                  : "Connect a Lightning wallet to send payments."}
           </DialogDescription>
         </DialogHeader>
-        {!nostr.wallet.connected ? (
+        {!canPay ? (
           <WalletConnectBlock />
         ) : (
           <>
@@ -2300,7 +2341,7 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
                 placeholder="lnbc1…"
               />
             </Field>
-            {!isLightningInvoice(dest) && (
+            {invoiceSats == null && (
               <Field label="Amount (sats)" hint={sats ? `≈ ${usd}` : undefined}>
                 <input
                   type="number"
@@ -2316,10 +2357,7 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
         )}
         <DialogFooter>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
-          <PrimaryBtn
-            disabled={!nostr.wallet.connected || !dest.trim() || busy}
-            onClick={() => void send()}
-          >
+          <PrimaryBtn disabled={!canPay || !dest.trim() || busy} onClick={() => void send()}>
             {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
             {busy ? "Sending…" : "Send"}
           </PrimaryBtn>
@@ -2469,6 +2507,9 @@ function TopUpModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [invoice, setInvoice] = useState("");
   const [busy, setBusy] = useState(false);
   const sats = price ? Math.max(1, Math.round((usd / price.usd) * 100_000_000)) : 0;
+  // Without a NIP-47 wallet, card checkout tops up the browser's Breez wallet
+  // directly (it is created on first use); return to /wallet to see the balance.
+  const cardTopUp = !nostr.wallet.connected && BREEZ_MOONPAY_CONFIGURED;
 
   useEffect(() => {
     if (open) {
@@ -2477,6 +2518,27 @@ function TopUpModal({ open, onClose }: { open: boolean; onClose: () => void }) {
       setBusy(false);
     }
   }, [open]);
+
+  const cardCheckout = async () => {
+    if (!sats) {
+      toast.error("Waiting for the live BTC price — try again in a second.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { url } = await createMoonPayUrl({
+        amountSat: sats,
+        amountUsd: usd,
+        redirectUrl: `${window.location.origin}/wallet`,
+      });
+      // MoonPay credits the browser wallet; the wallet page picks the balance
+      // up once the deposit syncs and claims.
+      window.location.assign(url);
+    } catch (error) {
+      toast.error(breezErrorMessage(error));
+      setBusy(false);
+    }
+  };
 
   const deposit = async () => {
     setBusy(true);
@@ -2500,11 +2562,42 @@ function TopUpModal({ open, onClose }: { open: boolean; onClose: () => void }) {
             <CreditCard className="size-5" /> Top up wallet
           </DialogTitle>
           <DialogDescription>
-            Generate a Lightning invoice from your wallet, then pay it from any exchange or card
-            on-ramp.
+            {cardTopUp
+              ? "Buy sats with card, Apple Pay or Google Pay — they land in your Crays wallet in this browser."
+              : "Generate a Lightning invoice from your wallet, then pay it from any exchange or card on-ramp."}
           </DialogDescription>
         </DialogHeader>
-        {!nostr.wallet.connected ? (
+        {cardTopUp ? (
+          <>
+            <Field
+              label="Amount (USD)"
+              hint={sats ? `≈ ${sats.toLocaleString()} sats` : "Waiting for the live BTC price…"}
+            >
+              <input
+                type="number"
+                min={1}
+                value={usd}
+                onChange={(e) => setUsd(Math.max(1, Number(e.target.value) || 0))}
+                className={inputCls}
+              />
+            </Field>
+            <div className="grid grid-cols-3 gap-2">
+              {[10, 20, 50, 100, 250, 500].map((preset) => (
+                <button
+                  key={preset}
+                  onClick={() => setUsd(preset)}
+                  className={`rounded-lg py-2 text-[12px] font-semibold ring-1 transition-colors ${
+                    usd === preset
+                      ? "bg-zinc-900 text-white ring-zinc-900"
+                      : "bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50"
+                  }`}
+                >
+                  ${preset}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : !nostr.wallet.connected ? (
           <WalletConnectBlock />
         ) : invoice ? (
           <div className="rounded-xl bg-zinc-50 p-4 text-center ring-1 ring-zinc-100">
@@ -2557,7 +2650,16 @@ function TopUpModal({ open, onClose }: { open: boolean; onClose: () => void }) {
         )}
         <DialogFooter>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
-          {nostr.wallet.connected && (
+          {cardTopUp ? (
+            <PrimaryBtn disabled={busy || !sats} onClick={() => void cardCheckout()}>
+              {busy ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <CreditCard className="size-4" />
+              )}
+              Continue to card payment
+            </PrimaryBtn>
+          ) : nostr.wallet.connected ? (
             <PrimaryBtn
               disabled={busy || !sats}
               onClick={() => void (invoice ? onClose() : deposit())}
@@ -2565,7 +2667,7 @@ function TopUpModal({ open, onClose }: { open: boolean; onClose: () => void }) {
               {busy ? <Loader2 className="size-4 animate-spin" /> : null}
               {invoice ? "Done" : "Generate invoice"}
             </PrimaryBtn>
-          )}
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>
