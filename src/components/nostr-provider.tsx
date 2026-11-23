@@ -66,12 +66,19 @@ import { uploadBlob, uploadFile as uploadFileToBlossom } from "@/lib/nostr/bloss
 import { fetchDirectMessages, sendDirectMessage, type DirectMessage } from "@/lib/nostr/dm";
 import { NwcClient, type NwcTransaction } from "@/lib/nostr/nwc";
 import {
+  hostedLightningAddress,
   lightningAddressFor,
   lightningAddressSource,
   type LightningAddressSource,
 } from "@/lib/nostr/lightning";
 import { requestZapInvoice } from "@/lib/nostr/zaps";
 import { setPurchaseOwner, syncCreatorPurchases } from "@/lib/nostr/badges";
+import {
+  deliverNewPostKeys,
+  ensurePostKey,
+  setKeyOwner,
+  startCreatorKeyServer,
+} from "@/lib/nostr/exclusive";
 import { setCreatorPassOwner } from "@/lib/nostr/creator-pass";
 
 export type NostrAuthMethod = "passkey" | "nsec" | "bunker" | "nostr-connect" | "nip07";
@@ -146,6 +153,22 @@ type NostrContextValue = {
     comment?: string;
     note?: NostrEvent | null;
   }) => Promise<{ preimage?: string; invoice: string }>;
+
+  /** Whether the signer can encrypt/deliver exclusive content keys (NIP-44). */
+  canDeliverKeys: () => boolean;
+  /** Seal a freshly published members-only post: cache its key, share it. */
+  sealNewPost: (input: {
+    postId: string;
+    key: string;
+    badgeSats?: number;
+    unlockSats?: number;
+  }) => Promise<void>;
+  /** Get the decryption key for a post this account is entitled to. */
+  resolvePostKey: (input: {
+    creator: string;
+    postId: string;
+    isAuthor?: boolean;
+  }) => Promise<string | null>;
 };
 
 const NostrContext = createContext<NostrContextValue | null>(null);
@@ -183,6 +206,7 @@ export function NostrProvider({ children }: { children: ReactNode }) {
   const walletRef = useRef<NwcClient | null>(null);
   const followsRef = useRef<FollowState>({ pubkeys: [], event: null });
   const restoreAttempted = useRef(false);
+  const stopKeyServerRef = useRef<(() => void) | null>(null);
 
   const [account, setAccount] = useState<NostrAccount | null>(null);
   const [restoring, setRestoring] = useState(true);
@@ -229,6 +253,8 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     // Membership and single-post purchases are signed events, so they follow
     // the account to any device even though the local cache starts empty.
     void syncCreatorPurchases(pubkey).catch(() => undefined);
+    // Content keys for exclusive posts belong to the account, like purchases.
+    setKeyOwner(pubkey);
   }, []);
 
   // Restore a previous session from encrypted local storage.
@@ -498,6 +524,9 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     clearSession();
     setPurchaseOwner(null);
     setCreatorPassOwner(null);
+    setKeyOwner(null);
+    stopKeyServerRef.current?.();
+    stopKeyServerRef.current = null;
     setAccount(null);
     setFollowing([]);
     setBookmarks([]);
@@ -738,6 +767,65 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     [refreshBalance],
   );
 
+  const canDeliverKeys = useCallback(() => Boolean(signerRef.current?.nip44Encrypt), []);
+
+  const sealNewPost = useCallback(
+    async (input: {
+      postId: string;
+      key: string;
+      /** Membership and single-post prices, for the keybox deposit. */
+      badgeSats?: number;
+      unlockSats?: number;
+    }) => {
+      const signer = requireSigner();
+      const creator = await signer.getPublicKey();
+      await deliverNewPostKeys({
+        signer,
+        creator,
+        postId: input.postId,
+        key: input.key,
+        address: lightningAddressFor(creator, account?.profile),
+        badgeSats: input.badgeSats,
+        unlockSats: input.unlockSats,
+      });
+    },
+    [requireSigner, account?.profile],
+  );
+
+  const resolvePostKey = useCallback(
+    async (input: { creator: string; postId: string; isAuthor?: boolean }) => {
+      const signer = requireSigner();
+      const myPubkey = await signer.getPublicKey();
+      return ensurePostKey({
+        signer,
+        myPubkey,
+        creator: input.creator,
+        postId: input.postId,
+        isAuthor: input.isAuthor,
+      });
+    },
+    [requireSigner],
+  );
+
+  // The signed-in creator's key server: answers key requests from readers who
+  // paid, and restores this account's own keys on any device.
+  const profileAddress = account?.profile.lud16 || account?.profile.lud06;
+  useEffect(() => {
+    stopKeyServerRef.current?.();
+    stopKeyServerRef.current = null;
+    const pubkey = account?.pubkey;
+    const signer = signerRef.current;
+    if (!pubkey || !signer || typeof signer.nip44Encrypt !== "function") return;
+    // The receive address readers pay at: the profile's Lightning address,
+    // else the account's hosted npub.cash one.
+    const address = profileAddress || hostedLightningAddress(pubkey);
+    stopKeyServerRef.current = startCreatorKeyServer(signer, pubkey, address);
+    return () => {
+      stopKeyServerRef.current?.();
+      stopKeyServerRef.current = null;
+    };
+  }, [account?.pubkey, profileAddress]);
+
   const value = useMemo<NostrContextValue>(
     () => ({
       account,
@@ -773,6 +861,9 @@ export function NostrProvider({ children }: { children: ReactNode }) {
       payInvoice,
       makeInvoice,
       zap,
+      canDeliverKeys,
+      sealNewPost,
+      resolvePostKey,
     }),
     [
       account,
@@ -808,6 +899,9 @@ export function NostrProvider({ children }: { children: ReactNode }) {
       payInvoice,
       makeInvoice,
       zap,
+      canDeliverKeys,
+      sealNewPost,
+      resolvePostKey,
     ],
   );
 

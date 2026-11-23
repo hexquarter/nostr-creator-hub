@@ -113,7 +113,7 @@ type LnurlPayResponse = {
   reason?: string;
 };
 
-function lightningAddressUrl(address: string) {
+export function lightningAddressUrl(address: string) {
   const [name, domain] = address.split("@");
   if (!name || !domain || !domain.includes(".")) {
     throw new Error("That doesn't look like a Lightning address (name@domain).");

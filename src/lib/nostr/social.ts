@@ -7,6 +7,7 @@ import {
 } from "nostr-tools";
 import { getSatoshisAmountFromBolt11 } from "nostr-tools/nip57";
 import { queryEvents, queryEventsMany, publishEvent, getRelayList } from "./relays";
+import { EXCLUSIVE_SCHEME } from "./exclusive";
 import { emptyProfile, fetchProfiles, type Profile } from "./profiles";
 import { getPreferences } from "@/lib/preferences";
 import type { AppSigner } from "./signer";
@@ -29,6 +30,8 @@ export type FeedNote = {
   contentWarning?: string;
   /** Members-only post: readable with the creator's badge. */
   premium?: boolean;
+  /** Members-only post whose text is encrypted; decrypts with the post key. */
+  encrypted?: boolean;
   /** Monthly membership price (sats / 30 days) from the post's `premium` tag. */
   premiumSats?: number;
   /** Price to unlock just this post, from its `premium-unlock` tag. */
@@ -156,6 +159,7 @@ export function noteFromEvent(event: NostrEvent, author?: Profile): FeedNote {
   const premiumSats = premiumTag ? Number.parseInt(premiumTag, 10) : Number.NaN;
   const unlockTag = firstTag(event, "premium-unlock");
   const premiumUnlockSats = unlockTag ? Number.parseInt(unlockTag, 10) : Number.NaN;
+  const encrypted = event.tags.some((t) => t[0] === "encrypted" && t[1] === EXCLUSIVE_SCHEME);
   return {
     event,
     id: event.id,
@@ -165,6 +169,7 @@ export function noteFromEvent(event: NostrEvent, author?: Profile): FeedNote {
     images: parseImages(event),
     contentWarning: warning || undefined,
     premium: premiumTag !== undefined,
+    encrypted,
     premiumSats: Number.isFinite(premiumSats) && premiumSats > 0 ? premiumSats : undefined,
     premiumUnlockSats:
       Number.isFinite(premiumUnlockSats) && premiumUnlockSats > 0 ? premiumUnlockSats : undefined,
@@ -247,7 +252,11 @@ export async function fetchFeed(options: FeedOptions = {}): Promise<FeedNote[]> 
     .filter(
       (event) =>
         (options.includeReplies || !noteIsReply(event)) &&
-        (!getPreferences().privacy.hideSpam || !looksLikeSpam(event.content)),
+        // Encrypted members-only text looks like base64 spam; the tag is the
+        // truth, so never let the heuristic drop it.
+        (!getPreferences().privacy.hideSpam ||
+          event.tags.some((t) => t[0] === "encrypted" && t[1] === EXCLUSIVE_SCHEME) ||
+          !looksLikeSpam(event.content)),
     )
     .slice(0, limit);
   if (events.length === 0) return [];

@@ -26,6 +26,7 @@ import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { useUI } from "./modals/ui-provider";
 import { useNostr } from "./nostr-provider";
 import { compactNumber, timeAgo } from "@/lib/format";
+import { decryptContent } from "@/lib/nostr/exclusive";
 import {
   contentWithoutImages,
   fetchNoteLikes,
@@ -58,6 +59,8 @@ export type Post = {
   premium?: boolean;
   premiumSats?: number;
   premiumUnlockSats?: number;
+  /** The text is encrypted on relays; unlocks with the post key. */
+  encrypted?: boolean;
   time: string;
   content: string;
   avatar?: string;
@@ -89,6 +92,7 @@ export function postFromNote(note: FeedNote): Post {
     premium: note.premium,
     premiumSats: note.premiumSats,
     premiumUnlockSats: note.premiumUnlockSats,
+    encrypted: note.encrypted,
     sensitive: note.contentWarning
       ? { reason: note.contentWarning, note: note.contentWarning }
       : undefined,
@@ -140,7 +144,59 @@ export function PostCard({ post }: { post: Post }) {
   // Members-only posts are readable by the author, by members of that creator's
   // program, or by anyone who paid for this one post.
   const unlockedPost = unlocks.some((item) => item.postId === post.id);
-  const locked = Boolean(post.premium && !isAuthor && !badge && !unlockedPost);
+  const hasBadge = Boolean(badge);
+  const locked = Boolean(post.premium && !isAuthor && !hasBadge && !unlockedPost);
+  // Encrypted posts decrypt for whoever is entitled; the key comes from the
+  // local cache, relays, or the creator's key server.
+  const encrypted = Boolean(post.encrypted && post.event && post.authorPubkey);
+  const creator = post.authorPubkey;
+  const [plaintext, setPlaintext] = useState<string | null>(null);
+  const [keyState, setKeyState] = useState<"loading" | "waiting" | "idle">("idle");
+  const [retryToken, setRetryToken] = useState(0);
+  useEffect(() => {
+    if (!encrypted || !creator || !post.event) {
+      setPlaintext(null);
+      setKeyState("idle");
+      return;
+    }
+    let cancelled = false;
+    setKeyState("loading");
+    const run = async () => {
+      try {
+        const key = await nostr.resolvePostKey({
+          creator,
+          postId: post.id,
+          isAuthor,
+        });
+        if (cancelled) return;
+        if (!key) {
+          setKeyState("waiting");
+          return;
+        }
+        const plain = await decryptContent(post.event!.content, key);
+        if (cancelled) return;
+        setPlaintext(plain);
+        setKeyState("idle");
+      } catch {
+        if (!cancelled) setKeyState("waiting");
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+    // Re-run when an entitlement arrives while the card is on screen.
+  }, [
+    encrypted,
+    post.id,
+    post.event,
+    isAuthor,
+    hasBadge,
+    unlockedPost,
+    retryToken,
+    creator,
+    nostr,
+  ]);
   const badgeSats = post.premiumSats ?? DEFAULT_BADGE_SATS;
   const unlockSats = post.premiumUnlockSats ?? Math.max(21, Math.round(badgeSats / 10));
   const priceLabel = (amount: number) => {
@@ -383,7 +439,7 @@ export function PostCard({ post }: { post: Post }) {
             >
               <LinkIcon className="size-4" /> Copy link
             </DropdownMenuItem>
-            {!locked && (
+            {!locked && !encrypted && (
               <DropdownMenuItem
                 onClick={() => {
                   void navigator.clipboard.writeText(post.content);
@@ -459,8 +515,34 @@ export function PostCard({ post }: { post: Post }) {
             </p>
           </div>
         </div>
+      ) : encrypted && !plaintext ? (
+        <div className="rounded-xl bg-amber-50/60 px-5 py-8 text-center ring-1 ring-amber-100">
+          <div className="flex flex-col items-center gap-2">
+            {keyState === "loading" ? (
+              <>
+                <Loader2 className="size-4 animate-spin text-amber-600" />
+                <p className="text-[12.5px] font-medium text-zinc-600">Decrypting…</p>
+              </>
+            ) : (
+              <>
+                <Lock className="size-4 text-amber-600" />
+                <p className="text-[13px] font-semibold text-zinc-900">Waiting for the key</p>
+                <p className="max-w-xs text-[11.5px] leading-relaxed text-zinc-500">
+                  This post is sealed. {isAuthor ? "Your" : `${post.author}’s`} key server releases
+                  the decryption key when they're online — it answers paid readers automatically.
+                </p>
+                <button
+                  onClick={() => setRetryToken((token) => token + 1)}
+                  className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-[12px] font-semibold text-amber-800 ring-1 ring-amber-200 transition-colors hover:bg-white/80"
+                >
+                  Retry
+                </button>
+              </>
+            )}
+          </div>
+        </div>
       ) : (
-        <PostContent content={post.content} />
+        <PostContent content={plaintext ?? post.content} />
       )}
 
       {locked && images.length > 0 && (

@@ -18,8 +18,10 @@ import type { FeedNote } from "./social";
  *
  * Purchases are kept on this device and also announced as signed kind-30078
  * events, so a creator can count members and a reader can restore what they
- * bought on another device. Payments go straight to the creator's Lightning
- * address, so Crays never holds the sats.
+ * bought on another device. The BOLT-11 invoice that settled the purchase
+ * rides along in the `pr` tag, which doubles as payment proof when the reader
+ * asks the creator for an exclusive post's decryption key. Payments go
+ * straight to the creator's Lightning address, so Crays never holds the sats.
  */
 export type CreatorBadge = {
   creator: string;
@@ -27,6 +29,8 @@ export type CreatorBadge = {
   sats: number;
   purchasedAt: number;
   expiresAt: number;
+  /** Settled BOLT-11 invoice, when the payment flow captured one. */
+  invoice?: string;
 };
 
 export const BADGE_DAYS = 30;
@@ -134,7 +138,12 @@ export function hasCreatorBadge(creator: string | undefined): boolean {
   return isBadgeActive(getCreatorBadge(creator));
 }
 
-export function grantCreatorBadge(creator: string, sats: number, days = BADGE_DAYS): CreatorBadge {
+export function grantCreatorBadge(
+  creator: string,
+  sats: number,
+  days = BADGE_DAYS,
+  invoice?: string,
+): CreatorBadge {
   const now = Date.now();
   const existing = getCreatorBadge(creator);
   // Renewing extends the current badge instead of losing the remaining days.
@@ -144,6 +153,7 @@ export function grantCreatorBadge(creator: string, sats: number, days = BADGE_DA
     sats,
     purchasedAt: now,
     expiresAt: start + days * DAY_MS,
+    invoice: invoice ?? existing?.invoice,
   };
   persist([...getBadges().filter((item) => item.creator !== creator), badge]);
   return badge;
@@ -169,18 +179,23 @@ export async function announceCreatorBadge(input: {
   creator: string;
   sats: number;
   expiresAt: number;
+  invoice?: string;
   signAndPublish: (template: EventTemplate) => Promise<NostrEvent>;
 }): Promise<void> {
+  const tags: string[][] = [
+    ["d", badgeAnnouncementDTag(input.creator)],
+    ["p", input.creator],
+    ["t", BADGE_ANNOUNCE_TAG],
+    ["amount", String(input.sats)],
+    ["expires", String(Math.floor(input.expiresAt / 1000))],
+  ];
+  // The settled invoice lets the creator's key server verify the payment
+  // before handing over exclusive content keys.
+  if (input.invoice) tags.push(["pr", input.invoice]);
   await input.signAndPublish({
     kind: BADGE_ANNOUNCE_KIND,
     created_at: Math.floor(Date.now() / 1000),
-    tags: [
-      ["d", badgeAnnouncementDTag(input.creator)],
-      ["p", input.creator],
-      ["t", BADGE_ANNOUNCE_TAG],
-      ["amount", String(input.sats)],
-      ["expires", String(Math.floor(input.expiresAt / 1000))],
-    ],
+    tags,
     content: "",
   });
 }
@@ -219,6 +234,8 @@ export type PostUnlock = {
   creator: string;
   sats: number;
   purchasedAt: number;
+  /** Settled BOLT-11 invoice, when the payment flow captured one. */
+  invoice?: string;
 };
 
 /** One-off purchases never expire: the post stays readable. */
@@ -298,12 +315,14 @@ export function grantPostUnlock(input: {
   postId: string;
   creator: string;
   sats: number;
+  invoice?: string;
 }): PostUnlock {
   const unlock: PostUnlock = {
     postId: input.postId,
     creator: input.creator,
     sats: input.sats,
     purchasedAt: Date.now(),
+    invoice: input.invoice,
   };
   persistUnlocks([...getPostUnlocks().filter((item) => item.postId !== input.postId), unlock]);
   return unlock;
@@ -318,18 +337,21 @@ export async function announcePostUnlock(input: {
   postId: string;
   creator: string;
   sats: number;
+  invoice?: string;
   signAndPublish: (template: EventTemplate) => Promise<NostrEvent>;
 }): Promise<void> {
+  const tags: string[][] = [
+    ["d", postUnlockAnnouncementDTag(input.postId)],
+    ["p", input.creator],
+    ["t", POST_UNLOCK_ANNOUNCE_TAG],
+    ["e", input.postId],
+    ["amount", String(input.sats)],
+  ];
+  if (input.invoice) tags.push(["pr", input.invoice]);
   await input.signAndPublish({
     kind: BADGE_ANNOUNCE_KIND,
     created_at: Math.floor(Date.now() / 1000),
-    tags: [
-      ["d", postUnlockAnnouncementDTag(input.postId)],
-      ["p", input.creator],
-      ["t", POST_UNLOCK_ANNOUNCE_TAG],
-      ["e", input.postId],
-      ["amount", String(input.sats)],
-    ],
+    tags,
     content: "",
   });
 }
@@ -363,12 +385,23 @@ export async function syncCreatorPurchases(pubkey: string): Promise<void> {
       const postId = d.slice("crays:unlock:".length);
       const creator = tagValue(event, "p") ?? "";
       if (!postId || !creator) continue;
-      if (nextUnlocks.some((unlock) => unlock.postId === postId)) continue;
+      const invoice = tagValue(event, "pr") || undefined;
+      const index = nextUnlocks.findIndex((unlock) => unlock.postId === postId);
+      if (index >= 0) {
+        // Backfill the payment proof on a record restored before invoices
+        // were recorded, so a later key request can prove the payment.
+        if (invoice && !nextUnlocks[index].invoice) {
+          nextUnlocks[index] = { ...nextUnlocks[index], invoice };
+          unlocksChanged = true;
+        }
+        continue;
+      }
       nextUnlocks.push({
         postId,
         creator,
         sats: Number(tagValue(event, "amount")) || 0,
         purchasedAt: event.created_at * 1000,
+        invoice,
       });
       unlocksChanged = true;
       continue;
@@ -387,6 +420,7 @@ export async function syncCreatorPurchases(pubkey: string): Promise<void> {
       sats,
       purchasedAt: existing?.purchasedAt ?? event.created_at * 1000,
       expiresAt,
+      invoice: tagValue(event, "pr") || existing?.invoice,
     };
     if (index >= 0) nextBadges[index] = badge;
     else nextBadges.push(badge);

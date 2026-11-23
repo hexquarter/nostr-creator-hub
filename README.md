@@ -1,7 +1,7 @@
 # Crays
 
 A premium Nostr client for Bitcoin creators: passkey-first sign-in, real Nostr
-profiles and feeds, Lightning zaps, and members-only posts.
+profiles and feeds, Lightning zaps, and encrypted members-only posts.
 
 ## Local development
 
@@ -100,6 +100,53 @@ The Lightning `verify` endpoint is optional per LUD-21. If a wallet doesn't
 expose one, the creator checkout asks the buyer to connect a wallet and pay in
 one tap, which confirms locally; fan purchases keep a clearly-labelled manual
 unlock for those addresses.
+
+## Members-only content: encrypted, not just hidden
+
+Members-only posts are **encrypted end to end** — relays only ever store
+ciphertext, so other Nostr clients (or anyone querying the relays directly)
+cannot read the text.
+
+- **Publishing** (`src/lib/nostr/exclusive.ts`): the composer seals the text
+  with a random per-post key (AES-256-GCM) and publishes the ciphertext with an
+  `encrypted: crays1` tag. The key is delivered as NIP-44-encrypted kind-30078
+  app-data events (`crays:key:<postId>:<recipient>`) to the author and to every
+  reader holding an active membership receipt at publish time.
+- **Reading**: the post card decrypts for the author, members, and single-post
+  unlockers using the locally cached key, a relay delivery, or — when the key
+  isn't there yet — a signed key request (`crays:keyreq:<postId>`) that the
+  creator's client answers.
+- **Key server**: while a creator is signed in, Crays polls for key requests
+  and only answers readers whose payment is proven. The strongest proof is the
+  settled BOLT-11 invoice the buyer paid, verified against the creator's own
+  LUD-21 `verify` endpoint; when that isn't available it falls back to the
+  reader's signed kind-30078 purchase receipt (the same self-attested trust
+  model as before).
+
+Two honest limits of the client-only design: keys cannot be revoked once
+delivered (an expired member keeps access to posts they already unlocked —
+future posts simply stop being unlocked), and the creator's client must be
+online for a purchase made after publication to decrypt.
+
+### Creator offline: the keybox
+
+The `keybox/` folder is a tiny optional Cloudflare Worker (KV + ~250 lines)
+that removes the "creator must be online" limitation. The creator's client
+deposits each post key there (NIP-98-authenticated); readers redeem their
+settled BOLT-11 invoice for the key, verified against the creator's own LUD-21
+`verify` endpoint:
+
+- an invoice ≥ the membership price, settled in the last 30 days, unlocks
+  **every** post of that creator — subscription buyers get the full history;
+- an invoice ≥ the post's single-unlock price unlocks exactly that post (each
+  invoice binds to the first post it redeems, so one cheap payment can't
+  unlock everything).
+
+The keybox holds no Nostr keys and never signs events; its only power is
+releasing content keys against verified payments. Deploy with `npx wrangler
+deploy` inside `keybox/` and point the app at it with
+`VITE_CRAYS_KEYBOX_URL`. Without it, everything still works through the
+creator's own client. See `keybox/README.md` for details and the trust model.
 
 ## Deploying to GitHub Pages
 

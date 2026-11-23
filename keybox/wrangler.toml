@@ -1,0 +1,13 @@
+name = "crays-keybox"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Storage for post keys and invoice bindings.
+# Create a namespace with: npx wrangler kv namespace create KEYBOX
+[[kv_namespaces]]
+binding = "KEYBOX"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+# No secrets required: the keybox never signs Nostr events and never holds
+# creator keys. It only stores content keys deposited by their creators and
+# releases them against verified Lightning payments.

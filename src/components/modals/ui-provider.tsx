@@ -36,6 +36,7 @@ import {
   usePostUnlocks,
 } from "@/lib/nostr/badges";
 import { lightningAddressFor } from "@/lib/nostr/lightning";
+import { EXCLUSIVE_SCHEME, encryptContent, generateContentKey } from "@/lib/nostr/exclusive";
 import {
   CREATOR_PASS_ADDRESS,
   CREATOR_PASS_CONFIGURED,
@@ -212,21 +213,28 @@ const MOONPAY_PROGRESS: Record<MoonPayProgress, string> = {
 /** Activate a membership or single-post unlock after a MoonPay purchase. */
 function grantMoonPayPurchase(order: PendingMoonPayOrder, signAndPublish: SignAndPublish) {
   if (order.mode === "post" && order.postId) {
-    grantPostUnlock({ postId: order.postId, creator: order.creator, sats: order.sats });
+    grantPostUnlock({
+      postId: order.postId,
+      creator: order.creator,
+      sats: order.sats,
+      invoice: order.invoice,
+    });
     void announcePostUnlock({
       postId: order.postId,
       creator: order.creator,
       sats: order.sats,
+      invoice: order.invoice,
       signAndPublish,
     }).catch(() => undefined);
     return "Post unlocked — card payment confirmed";
   }
 
-  const badge = grantCreatorBadge(order.creator, order.sats);
+  const badge = grantCreatorBadge(order.creator, order.sats, BADGE_DAYS, order.invoice);
   void announceCreatorBadge({
     creator: order.creator,
     sats: order.sats,
     expiresAt: badge.expiresAt,
+    invoice: order.invoice,
     signAndPublish,
   }).catch(() => undefined);
   return `Membership active — ${daysLeft(badge)} days of members-only posts`;
@@ -795,10 +803,29 @@ function ComposeModal({
     try {
       const tags: string[][] = [];
       // Selling memberships is a Crays creator-badge feature; never tag a post
-      // as members-only without it.
-      if (premium && canPublishPremium) {
+      // as members-only without it. Polls stay public: their options live in
+      // tags, which no amount of content encryption can hide.
+      const premiumPost = premium && canPublishPremium && tab !== "poll";
+      let content = text.trim();
+      let contentKey: string | null = null;
+      if (premiumPost) {
+        // Members-only posts are sealed before publishing: relays only ever
+        // see ciphertext, and the key is shared NIP-44-encrypted with members.
+        if (!nostr.canDeliverKeys()) {
+          toast.error(
+            "Your signer doesn't support NIP-44 encryption, so members-only posts can't be locked. Use a passkey account, an nsec, or an extension with NIP-44.",
+          );
+          return;
+        }
+        contentKey = generateContentKey();
+        content = await encryptContent(text.trim(), contentKey);
         tags.push(["premium", String(price)]);
         tags.push(["premium-unlock", String(unlockPrice)]);
+        tags.push(["encrypted", EXCLUSIVE_SCHEME]);
+        tags.push([
+          "alt",
+          "Members-only post — the text is encrypted and unlocks for members in Crays.",
+        ]);
       }
       if (tab === "article") {
         const d = title.trim()
@@ -827,13 +854,31 @@ function ComposeModal({
           .forEach((option, index) => tags.push(["option", `option-${index + 1}`, option]));
       }
 
-      await nostr.publish({
-        content: text.trim(),
+      const event = await nostr.publish({
+        content,
         kind: tab === "article" ? 30023 : tab === "poll" ? 1068 : 1,
         replyTo: options.mode === "reply" ? options.replyToEvent : undefined,
         contentWarning: sensitive ? `${reason}${warning ? ` — ${warning}` : ""}` : undefined,
         tags,
       });
+
+      // Share the content key with the author's other devices and everyone
+      // with an active membership. Best effort: a reader who misses out asks
+      // the creator's key server for the key later.
+      if (contentKey && event) {
+        try {
+          await nostr.sealNewPost({
+            postId: event.id,
+            key: contentKey,
+            badgeSats: price,
+            unlockSats: unlockPrice,
+          });
+        } catch {
+          toast.error(
+            "Published, but the key couldn't be shared with every member yet. Keep Crays open so their unlock requests can be answered.",
+          );
+        }
+      }
 
       toast.success(
         tab === "article"
@@ -918,14 +963,14 @@ function ComposeModal({
             </div>
           )}
           <div className="space-y-2">
-            {canPublishPremium ? (
+            {canPublishPremium && tab !== "poll" ? (
               <>
                 <ToggleRow
                   icon={<Crown className="size-4 text-amber-600" />}
                   title="Members only"
                   hint={
                     premium
-                      ? `Members pay ${price.toLocaleString()} sats / ${BADGE_DAYS} days; anyone can also unlock just this post for ${unlockPrice.toLocaleString()} sats.`
+                      ? `Members pay ${price.toLocaleString()} sats / ${BADGE_DAYS} days; anyone can also unlock just this post for ${unlockPrice.toLocaleString()} sats. The text is encrypted until they pay.`
                       : "Free for everyone."
                   }
                   tone="amber"
@@ -1161,28 +1206,31 @@ function BadgeModal({
     }
   };
 
-  const grantPurchase = () => {
+  /** `invoice` is the settled BOLT-11 payment, kept as proof of purchase. */
+  const grantPurchase = (invoice?: string) => {
     if (!creator) return;
     if (buyingPost && options.postId) {
-      grantPostUnlock({ postId: options.postId, creator, sats });
+      grantPostUnlock({ postId: options.postId, creator, sats, invoice });
       // Signed proof of the purchase, so it can be restored on another device.
       void announcePostUnlock({
         postId: options.postId,
         creator,
         sats,
+        invoice,
         signAndPublish: nostr.signAndPublish,
       }).catch(() => undefined);
       toast.success("Post unlocked — it stays in your library");
       onClose();
       return;
     }
-    const badge = grantCreatorBadge(creator, sats);
+    const badge = grantCreatorBadge(creator, sats, BADGE_DAYS, invoice);
     // Signed proof of the purchase: lets the creator count members and lets
     // this reader restore the membership on another device.
     void announceCreatorBadge({
       creator,
       sats,
       expiresAt: badge.expiresAt,
+      invoice,
       signAndPublish: nostr.signAndPublish,
     }).catch(() => undefined);
     toast.success(`Membership active — ${daysLeft(badge)} days of members-only posts`);
@@ -1204,7 +1252,7 @@ function BadgeModal({
       const address = lightningAddressFor(creator, profile);
       const nextInvoice = await requestPaymentInvoice(address, sats);
       await nostr.payInvoice(nextInvoice);
-      grantPurchase();
+      grantPurchase(nextInvoice);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Couldn't buy that badge.");
     } finally {
@@ -1320,7 +1368,7 @@ function BadgeModal({
     if (invoice) {
       // Only wallets without LUD-21 need a manual confirmation; otherwise the
       // poll below unlocks the moment the invoice settles.
-      if (!verifyUrl) grantPurchase();
+      if (!verifyUrl) grantPurchase(invoice);
       return;
     }
     if (nostr.wallet.connected) {
@@ -1348,7 +1396,7 @@ function BadgeModal({
         const body = (await response.json()) as { settled?: boolean; status?: string };
         if (cancelled) return;
         if (body.settled === true) {
-          grantRef.current();
+          grantRef.current(invoice ?? undefined);
           return;
         }
         if (body.status === "ERROR") return;
