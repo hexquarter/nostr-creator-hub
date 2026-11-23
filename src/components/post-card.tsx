@@ -528,8 +528,20 @@ export function PostCard({ post }: { post: Post }) {
                 <Lock className="size-4 text-amber-600" />
                 <p className="text-[13px] font-semibold text-zinc-900">Waiting for the key</p>
                 <p className="max-w-xs text-[11.5px] leading-relaxed text-zinc-500">
-                  This post is sealed. {isAuthor ? "Your" : `${post.author}’s`} key server releases
-                  the decryption key when they're online — it answers paid readers automatically.
+                  {badges.some((item) => item.creator === post.authorPubkey && item.invoice) ||
+                  unlocks.some((item) => item.postId === post.id && item.invoice) ? (
+                    <>
+                      This post is sealed. Paid readers get the key instantly from the creator's key
+                      vault, or from {isAuthor ? "your" : `${post.author}’s`} key server when
+                      they're online.
+                    </>
+                  ) : (
+                    <>
+                      This post is sealed, and this device's unlock has no payment proof attached —
+                      the key vault can't verify it, so {isAuthor ? "your" : `${post.author}’s`} key
+                      server will answer when they're online.
+                    </>
+                  )}
                 </p>
                 <button
                   onClick={() => setRetryToken((token) => token + 1)}

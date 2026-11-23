@@ -29,7 +29,10 @@ export async function uploadPostKey(input: {
   key: string;
 }): Promise<boolean> {
   const base = keyboxUrl();
-  if (!base) return false;
+  if (!base) {
+    console.info("[keybox] not configured (VITE_CRAYS_KEYBOX_URL) — skipping key deposit");
+    return false;
+  }
   const payload = {
     address: input.address,
     badgeSats: input.badgeSats,
@@ -50,8 +53,14 @@ export async function uploadPostKey(input: {
       headers: { Authorization: auth, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    return response.ok;
-  } catch {
+    if (!response.ok) {
+      console.warn(`[keybox] deposit rejected for ${input.postId}: HTTP ${response.status}`);
+      return false;
+    }
+    console.info(`[keybox] deposited key for ${input.postId}`);
+    return true;
+  } catch (error) {
+    console.warn("[keybox] deposit failed:", error);
     return false;
   }
 }
@@ -66,11 +75,15 @@ export async function listKeyboxPosts(
   try {
     const auth = await nip98.getToken(`${base}/mine`, "GET", (event) => signer.signEvent(event));
     const response = await fetch(`${base}/mine`, { headers: { Authorization: auth } });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.warn(`[keybox] listing stored posts failed: HTTP ${response.status}`);
+      return null;
+    }
     const body = (await response.json()) as { posts?: unknown };
     if (!Array.isArray(body.posts)) return null;
     return body.posts.filter((id): id is string => typeof id === "string");
-  } catch {
+  } catch (error) {
+    console.warn("[keybox] listing stored posts failed:", error);
     return null;
   }
 }
@@ -98,11 +111,15 @@ export async function fetchKeyFromKeybox(
         chain: chain.filter((pr) => typeof pr === "string" && pr.length >= 50),
       }),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.warn(`[keybox] redeem refused for ${postId}: HTTP ${response.status}`);
+      return null;
+    }
     const body = (await response.json()) as { key?: unknown };
     if (typeof body.key !== "string" || body.key.length !== 64) return null;
     return body.key;
-  } catch {
+  } catch (error) {
+    console.warn("[keybox] redeem failed:", error);
     return null;
   }
 }

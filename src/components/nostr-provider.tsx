@@ -162,7 +162,7 @@ type NostrContextValue = {
     key: string;
     badgeSats?: number;
     unlockSats?: number;
-  }) => Promise<void>;
+  }) => Promise<{ delivered: number; deposited: boolean }>;
   /** Get the decryption key for a post this account is entitled to. */
   resolvePostKey: (input: {
     creator: string;
@@ -779,7 +779,7 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     }) => {
       const signer = requireSigner();
       const creator = await signer.getPublicKey();
-      await deliverNewPostKeys({
+      return deliverNewPostKeys({
         signer,
         creator,
         postId: input.postId,

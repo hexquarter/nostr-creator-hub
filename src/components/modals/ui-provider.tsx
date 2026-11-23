@@ -881,12 +881,17 @@ function ComposeModal({
       // the creator's key server for the key later.
       if (contentKey && event) {
         try {
-          await nostr.sealNewPost({
+          const seal = await nostr.sealNewPost({
             postId: event.id,
             key: contentKey,
             badgeSats: price,
             unlockSats: unlockPrice,
           });
+          if (!seal.deposited) {
+            toast.warning(
+              "Published, but the key vault deposit failed — purchases made while you're offline may not unlock. Details in the browser console.",
+            );
+          }
         } catch {
           toast.error(
             "Published, but the key couldn't be shared with every member yet. Keep Crays open so their unlock requests can be answered.",

@@ -322,8 +322,10 @@ export async function deliverNewPostKeys(input: {
   // membership price is the *floor*: the smaller of the just-set price and
   // the cheapest price the creator has advertised recently, so members who
   // paid before a price raise keep their renewals verifiable.
-  let deposited = false;
-  if (input.address) {
+  // `deposited` starts true: with no keybox configured there is nothing to
+  // deposit, so only a *configured* vault failing should be reported.
+  let deposited = true;
+  if (input.address && keyboxUrl()) {
     let badgeFloor = input.badgeSats ?? 0;
     try {
       const relayFloor = await badgePriceFloorFor(input.creator);
