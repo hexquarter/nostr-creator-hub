@@ -29,6 +29,7 @@ import {
   announcePostUnlock,
   daysLeft,
   fetchCreatorMembers,
+  fetchProgramPricing,
   grantCreatorBadge,
   grantPostUnlock,
   isBadgeActive,
@@ -765,6 +766,7 @@ function ComposeModal({
   const ui = useUI();
   const creatorPass = useCreatorPass();
   const canPublishPremium = isCreatorPassActive(creatorPass);
+  const ownerPubkey = nostr.account?.pubkey;
   const [tab, setTab] = useState<"post" | "article" | "poll">(
     options.mode === "article" ? "article" : options.mode === "poll" ? "poll" : "post",
   );
@@ -792,8 +794,19 @@ function ComposeModal({
       setReason("Nudity");
       setWarning("");
       setBusy(false);
+      // Pre-fill prices with the membership pricing the creator customized on
+      // their profile, when they have.
+      if (canPublishPremium && ownerPubkey) {
+        fetchProgramPricing(ownerPubkey)
+          .then((pricing) => {
+            if (!pricing) return;
+            setPrice(pricing.badgeSats);
+            if (pricing.unlockSats != null) setUnlockPrice(pricing.unlockSats);
+          })
+          .catch(() => undefined);
+      }
     }
-  }, [open, options.mode]);
+  }, [open, options.mode, canPublishPremium, ownerPubkey]);
 
   const publish = async () => {
     if (!text.trim()) {

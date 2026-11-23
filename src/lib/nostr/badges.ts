@@ -248,6 +248,69 @@ export function badgePriceFromNotes(notes: FeedNote[]): number | null {
   return premium?.premiumSats ?? (premium ? DEFAULT_BADGE_SATS : null);
 }
 
+// ---------- Program pricing (the creator's customizable defaults) ----------
+
+export type ProgramPricing = {
+  /** Monthly membership price, in sats. */
+  badgeSats: number;
+  /** Per-post unlock price, in sats; null lets posts fall back to a fraction. */
+  unlockSats: number | null;
+};
+
+const PROGRAM_TAG = "crays-program";
+
+export function programPricingDTag() {
+  return "crays:program";
+}
+
+/**
+ * Publish the creator's program pricing: the monthly membership and per-post
+ * unlock prices they chose on their profile. Posts still carry their own
+ * prices — this sets the defaults the composer pre-fills and the price fans
+ * see when joining from the creator's profile.
+ */
+export async function announceProgramPricing(input: {
+  badgeSats: number;
+  unlockSats?: number | null;
+  signAndPublish: (template: EventTemplate) => Promise<NostrEvent>;
+}): Promise<void> {
+  const tags: string[][] = [
+    ["d", programPricingDTag()],
+    ["t", PROGRAM_TAG],
+    ["premium", String(Math.max(1, Math.round(input.badgeSats)))],
+  ];
+  if (input.unlockSats != null) {
+    tags.push(["premium-unlock", String(Math.max(1, Math.round(input.unlockSats)))]);
+  }
+  await input.signAndPublish({
+    kind: BADGE_ANNOUNCE_KIND,
+    created_at: Math.floor(Date.now() / 1000),
+    tags,
+    content: "",
+  });
+}
+
+/** The creator's published program pricing, or null when they haven't set it. */
+export async function fetchProgramPricing(
+  creator: string,
+  timeout = 5000,
+): Promise<ProgramPricing | null> {
+  if (typeof window === "undefined") return null;
+  const events = await queryEvents(
+    { kinds: [BADGE_ANNOUNCE_KIND], authors: [creator], "#d": [programPricingDTag()], limit: 1 },
+    { timeout, fresh: true },
+  );
+  const event = [...events].sort((a, b) => b.created_at - a.created_at)[0];
+  if (!event) return null;
+  const badgeSats = Number.parseInt(tagValue(event, "premium") ?? "", 10);
+  if (!Number.isFinite(badgeSats) || badgeSats <= 0) return null;
+  const unlockSats = Number.parseInt(tagValue(event, "premium-unlock") ?? "", 10);
+  return {
+    badgeSats,
+    unlockSats: Number.isFinite(unlockSats) && unlockSats > 0 ? unlockSats : null,
+  };
+}
+
 export function daysLeft(badge: CreatorBadge): number {
   return Math.max(0, Math.ceil((badge.expiresAt - Date.now()) / DAY_MS));
 }

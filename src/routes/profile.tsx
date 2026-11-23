@@ -19,8 +19,11 @@ import {
   badgePriceFromNotes,
   daysLeft,
   fetchCreatorMembers,
+  fetchProgramPricing,
+  announceProgramPricing,
   isBadgeActive,
   useCreatorBadges,
+  type ProgramPricing,
 } from "@/lib/nostr/badges";
 import { CREATOR_PASS_USD, isCreatorPassActive, useCreatorPass } from "@/lib/nostr/creator-pass";
 import { formatUsd, satsToUsd, useBtcPrice } from "@/lib/nostr/price";
@@ -33,6 +36,7 @@ import {
   Link as LinkIcon,
   MapPin,
   Settings as SettingsIcon,
+  SlidersHorizontal,
   Zap,
   Globe,
   Loader2,
@@ -174,6 +178,66 @@ function Profile() {
     };
   }, [pubkey]);
 
+  // The creator's program pricing: what they customized on their profile.
+  // Falls back to per-post prices when they never set it.
+  const [program, setProgram] = useState<ProgramPricing | null>(null);
+  useEffect(() => {
+    if (!pubkey) {
+      setProgram(null);
+      return;
+    }
+    let active = true;
+    fetchProgramPricing(pubkey)
+      .then((pricing) => {
+        if (active) setProgram(pricing);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [pubkey]);
+
+  const [pricingOpen, setPricingOpen] = useState(false);
+  const [monthlyInput, setMonthlyInput] = useState("");
+  const [unlockInput, setUnlockInput] = useState("");
+  const [savingPricing, setSavingPricing] = useState(false);
+
+  const openPricingEditor = () => {
+    const current = program?.badgeSats ?? badgePriceFromNotes(notes);
+    setMonthlyInput(current != null ? String(current) : "");
+    setUnlockInput(program?.unlockSats != null ? String(program.unlockSats) : "");
+    setPricingOpen(true);
+  };
+
+  const savePricing = async () => {
+    const monthly = Number.parseInt(monthlyInput.trim(), 10);
+    if (!Number.isFinite(monthly) || monthly < 1) {
+      toast.error("Set a monthly price in sats.");
+      return;
+    }
+    const unlockRaw = unlockInput.trim();
+    const unlock = unlockRaw === "" ? null : Number.parseInt(unlockRaw, 10);
+    if (unlock !== null && (!Number.isFinite(unlock) || unlock < 1)) {
+      toast.error("The per-post unlock price must be a number of sats.");
+      return;
+    }
+    setSavingPricing(true);
+    try {
+      await announceProgramPricing({
+        badgeSats: monthly,
+        unlockSats: unlock,
+        signAndPublish: nostr.signAndPublish,
+      });
+      setProgram({ badgeSats: monthly, unlockSats: unlock });
+      setPricingOpen(false);
+      toast.success("Membership prices updated — your next members-only post uses them.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't save your prices.");
+    } finally {
+      setSavingPricing(false);
+    }
+  };
+
   const visible = useMemo(() => {
     if (tab === "media") return notes.filter((note) => note.images.length > 0);
     if (tab === "articles") return notes.filter((note) => note.event.kind === 30023);
@@ -227,6 +291,14 @@ function Profile() {
   const premiumCount = notes.filter((note) => note.premium).length;
   const hasCreatorPass = isCreatorPassActive(creatorPass);
   const hasBadgeProgram = badgePrice != null;
+  // Program pricing wins when the creator customized it on their profile;
+  // per-post prices fill in otherwise.
+  const displayBadgePrice = program?.badgeSats ?? badgePrice;
+  const displayUnlockPrice = program?.unlockSats ?? unlockPrice;
+  // The price fans see when joining: the customized program price, falling
+  // back to the latest members-only post's price. Joining needs at least one
+  // members-only post to exist, hence the badgePrice gate.
+  const joinPrice = badgePrice != null ? (program?.badgeSats ?? badgePrice) : null;
   const showMembership = hasBadgeProgram || isOwn;
   const priceLabel = (amount: number) => {
     const usd = satsToUsd(amount, btc);
@@ -293,9 +365,9 @@ function Profile() {
               )}
             </div>
             <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
-              {badgePrice != null && !isOwn && (
+              {joinPrice != null && !isOwn && (
                 <button
-                  onClick={() => ui.openBadge({ creator: pubkey, name, sats: badgePrice })}
+                  onClick={() => ui.openBadge({ creator: pubkey, name, sats: joinPrice })}
                   className={`col-span-2 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-2 text-[12px] font-semibold transition-colors sm:col-auto ${
                     ownedBadge
                       ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100"
@@ -305,12 +377,13 @@ function Profile() {
                   <Crown className="size-3.5" />
                   {ownedBadge
                     ? `Member · ${daysLeft(ownedBadge)}d left`
-                    : `Join · ${priceLabel(badgePrice)}`}
+                    : `Join · ${priceLabel(joinPrice)}`}
                 </button>
               )}
-              {isOwn && badgePrice != null && (
+              {isOwn && displayBadgePrice != null && (
                 <span className="col-span-2 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-amber-50 px-3.5 py-2 text-[12px] font-semibold text-amber-700 ring-1 ring-amber-100 sm:col-auto">
-                  <Crown className="size-3.5" /> Membership · {compactNumber(badgePrice)} sats
+                  <Crown className="size-3.5" /> Membership · {compactNumber(displayBadgePrice)}{" "}
+                  sats
                 </span>
               )}
               <button
@@ -468,28 +541,28 @@ function Profile() {
                       Monthly membership
                     </p>
                     <p className="mt-0.5 text-[24px] font-bold leading-none tracking-tight text-amber-100">
-                      {hasBadgeProgram ? priceLabel(badgePrice) : "Not set"}
+                      {displayBadgePrice != null ? priceLabel(displayBadgePrice) : "Not set"}
                     </p>
                   </div>
-                  {unlockPrice != null && (
+                  {displayUnlockPrice != null && (
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-white/45">
                         Single post
                       </p>
                       <p className="mt-0.5 text-[18px] font-semibold leading-none tracking-tight text-zinc-100">
-                        {priceLabel(unlockPrice)}
+                        {priceLabel(displayUnlockPrice)}
                       </p>
                     </div>
                   )}
                 </div>
 
                 <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center">
-                  {!isOwn && hasBadgeProgram && !ownedBadge && (
+                  {!isOwn && joinPrice != null && !ownedBadge && (
                     <button
-                      onClick={() => ui.openBadge({ creator: pubkey, name, sats: badgePrice })}
+                      onClick={() => ui.openBadge({ creator: pubkey, name, sats: joinPrice })}
                       className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-5 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-amber-400"
                     >
-                      <Crown className="size-4" /> Join with card · {priceLabel(badgePrice)}
+                      <Crown className="size-4" /> Join with card · {priceLabel(joinPrice)}
                     </button>
                   )}
                   {!isOwn && ownedBadge && (
@@ -498,12 +571,22 @@ function Profile() {
                     </span>
                   )}
                   {isOwn && hasBadgeProgram && (
-                    <button
-                      onClick={() => ui.openCompose({ mode: "post" })}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-5 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-amber-400"
-                    >
-                      <Crown className="size-4" /> Write members-only post
-                    </button>
+                    <>
+                      <button
+                        onClick={() => ui.openCompose({ mode: "post" })}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-5 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-amber-400"
+                      >
+                        <Crown className="size-4" /> Write members-only post
+                      </button>
+                      {hasCreatorPass && (
+                        <button
+                          onClick={openPricingEditor}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/10 px-5 py-3 text-[13px] font-semibold text-zinc-100 ring-1 ring-white/15 transition-colors hover:bg-white/15"
+                        >
+                          <SlidersHorizontal className="size-4" /> Customize prices
+                        </button>
+                      )}
+                    </>
                   )}
                   {isOwn && !hasBadgeProgram && (
                     <button
@@ -512,12 +595,16 @@ function Profile() {
                           ui.openUpgrade();
                           return;
                         }
-                        ui.openCompose({ mode: "post" });
+                        openPricingEditor();
                       }}
                       className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-5 py-3 text-[13px] font-semibold text-white transition-colors hover:bg-amber-400"
                     >
-                      {hasCreatorPass ? <Crown className="size-4" /> : <Lock className="size-4" />}
-                      {hasCreatorPass ? "Start your membership" : "Get Crays premium"}
+                      {hasCreatorPass ? (
+                        <SlidersHorizontal className="size-4" />
+                      ) : (
+                        <Lock className="size-4" />
+                      )}
+                      {hasCreatorPass ? "Customize membership" : "Get Crays premium"}
                     </button>
                   )}
                 </div>
@@ -537,16 +624,90 @@ function Profile() {
                     single-post unlocks.
                   </p>
                 )}
+
+                {isOwn && hasCreatorPass && pricingOpen && (
+                  <div className="mt-4 rounded-2xl bg-white/5 p-4 ring-1 ring-white/10">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-white/50">
+                        Membership pricing
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-400">
+                        Defaults for your next members-only post — existing posts keep their own
+                        prices.
+                      </p>
+                    </div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-white/50">
+                          Monthly membership (sats)
+                        </span>
+                        <input
+                          value={monthlyInput}
+                          onChange={(e) => setMonthlyInput(e.target.value)}
+                          inputMode="numeric"
+                          placeholder="e.g. 500"
+                          className="mt-1 w-full rounded-xl bg-white/10 px-3 py-2 text-[13px] text-white ring-1 ring-white/15 transition-colors placeholder:text-white/30 focus:outline-none focus:ring-amber-400/60"
+                        />
+                        {(() => {
+                          const parsed = Number.parseInt(monthlyInput, 10);
+                          const usd =
+                            Number.isFinite(parsed) && parsed > 0 ? satsToUsd(parsed, btc) : null;
+                          return usd != null ? (
+                            <span className="mt-1 block text-[10.5px] text-zinc-400">
+                              ≈ {formatUsd(usd)} / month
+                            </span>
+                          ) : null;
+                        })()}
+                      </label>
+                      <label className="block">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-white/50">
+                          Per-post unlock (sats, optional)
+                        </span>
+                        <input
+                          value={unlockInput}
+                          onChange={(e) => setUnlockInput(e.target.value)}
+                          inputMode="numeric"
+                          placeholder="e.g. 200"
+                          className="mt-1 w-full rounded-xl bg-white/10 px-3 py-2 text-[13px] text-white ring-1 ring-white/15 transition-colors placeholder:text-white/30 focus:outline-none focus:ring-amber-400/60"
+                        />
+                        <span className="mt-1 block text-[10.5px] text-zinc-400">
+                          Leave empty to use a tenth of the monthly price.
+                        </span>
+                      </label>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => void savePricing()}
+                        disabled={savingPricing}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 px-4 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-amber-400 disabled:opacity-60"
+                      >
+                        {savingPricing ? (
+                          <>
+                            <Loader2 className="size-3.5 animate-spin" /> Saving…
+                          </>
+                        ) : (
+                          "Save prices"
+                        )}
+                      </button>
+                      <button
+                        onClick={() => setPricingOpen(false)}
+                        className="rounded-xl bg-white/10 px-4 py-2 text-[12px] font-semibold text-zinc-200 transition-colors hover:bg-white/15"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="grid w-full shrink-0 grid-cols-2 gap-2 rounded-2xl bg-white/5 p-3 ring-1 ring-white/10 sm:grid-cols-4 lg:w-[340px] lg:grid-cols-2 lg:self-stretch">
                 <MembershipStat
                   label="Monthly price"
-                  value={hasBadgeProgram ? priceLabel(badgePrice) : "Not set"}
+                  value={displayBadgePrice != null ? priceLabel(displayBadgePrice) : "Not set"}
                 />
                 <MembershipStat
                   label="Per-post unlock"
-                  value={unlockPrice == null ? "Not set" : priceLabel(unlockPrice)}
+                  value={displayUnlockPrice == null ? "Not set" : priceLabel(displayUnlockPrice)}
                 />
                 <MembershipStat
                   label="Members"
