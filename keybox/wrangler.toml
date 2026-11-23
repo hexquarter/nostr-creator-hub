@@ -6,7 +6,7 @@ compatibility_date = "2024-11-01"
 # Create a namespace with: npx wrangler kv namespace create KEYBOX
 [[kv_namespaces]]
 binding = "KEYBOX"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "0e96ba5e7437472abb0507b8b0025bf7"
 
 # No secrets required: the keybox never signs Nostr events and never holds
 # creator keys. It only stores content keys deposited by their creators and

@@ -57,6 +57,7 @@ jobs:
           VITE_BREEZ_API_KEY: ${{ vars.BREEZ_API_KEY }}
           VITE_BREEZ_MOONPAY_DELIVERY: ${{ vars.BREEZ_MOONPAY_DELIVERY }}
           VITE_CRAYS_DEV_PAYMENTS: ${{ vars.CRAYS_DEV_PAYMENTS }}
+          VITE_CRAYS_KEYBOX_URL: ${{ vars.CRAYS_KEYBOX_URL }}
         run: yarn build
 
       - name: Configure Pages
