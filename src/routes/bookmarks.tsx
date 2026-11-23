@@ -50,19 +50,14 @@ function Bookmarks() {
   }, [idsKey]);
 
   return (
-    <PageShell
-      title="Bookmarks"
-      subtitle="Saved privately to your Nostr bookmarks list."
-    >
+    <PageShell title="Bookmarks" subtitle="Saved privately to your Nostr bookmarks list.">
       <section className="flex items-center gap-3 overflow-hidden rounded-2xl bg-white p-4 shadow-card ring-1 ring-black/5">
         <span className="grid size-10 place-items-center rounded-xl bg-gradient-to-br from-brand to-violet-500 text-white">
           <Bookmark className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[12.5px] font-semibold text-zinc-900">All bookmarks</p>
-          <p className="text-[11px] text-zinc-500">
-            {nostr.bookmarks.length} saved
-          </p>
+          <p className="text-[11px] text-zinc-500">{nostr.bookmarks.length} saved</p>
         </div>
       </section>
 
