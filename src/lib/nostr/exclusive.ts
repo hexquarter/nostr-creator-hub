@@ -40,7 +40,8 @@ const KEY_TAG = "crays-key";
 const KEYREQ_TAG = "crays-keyreq";
 const KEY_BYTES = 32;
 const REQUEST_POLL_MS = 4000;
-const REQUEST_POLL_ATTEMPTS = 10;
+/** 15 × 4s = a minute: comfortably covers two 30s key-server ticks. */
+const REQUEST_POLL_ATTEMPTS = 15;
 const BADGE_DAYS_SECONDS = 30 * 24 * 60 * 60;
 /** How many settled invoices a membership chain may carry (2 years of renewals). */
 const MAX_BADGE_CHAIN = 24;

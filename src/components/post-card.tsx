@@ -43,6 +43,7 @@ import {
 } from "@/lib/nostr/badges";
 import { usePreferences } from "@/lib/preferences";
 import { formatUsd, satsToUsd, useBtcPrice } from "@/lib/nostr/price";
+import { DEV_PAYMENTS_ENABLED } from "@/lib/payments/dev-payments";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -540,6 +541,12 @@ export function PostCard({ post }: { post: Post }) {
                       This post is sealed, and this device's unlock has no payment proof attached —
                       the key vault can't verify it, so {isAuthor ? "your" : `${post.author}’s`} key
                       server will answer when they're online.
+                      {DEV_PAYMENTS_ENABLED && (
+                        <span className="mt-1 block">
+                          Simulated (dev) unlocks are served by the creator's key server — keep a
+                          signed-in creator tab open while testing.
+                        </span>
+                      )}
                     </>
                   )}
                 </p>
