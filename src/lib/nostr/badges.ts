@@ -29,8 +29,15 @@ export type CreatorBadge = {
   sats: number;
   purchasedAt: number;
   expiresAt: number;
-  /** Settled BOLT-11 invoice, when the payment flow captured one. */
+  /** Newest settled BOLT-11 invoice; the proof the membership was paid. */
   invoice?: string;
+  /**
+   * Older invoices this membership renewed on top of, oldest first. Together
+   * with `invoice` this is the chain every verifier replays to check that
+   * `expiresAt` is honest: each settled invoice extends the membership 30
+   * days from the later of the previous expiry and its own timestamp.
+   */
+  priorInvoices?: string[];
 };
 
 export const BADGE_DAYS = 30;
@@ -63,7 +70,10 @@ function isBadge(value: unknown): value is CreatorBadge {
     typeof badge.creator === "string" &&
     typeof badge.sats === "number" &&
     typeof badge.purchasedAt === "number" &&
-    typeof badge.expiresAt === "number"
+    typeof badge.expiresAt === "number" &&
+    (badge.priorInvoices === undefined ||
+      (Array.isArray(badge.priorInvoices) &&
+        badge.priorInvoices.every((item) => typeof item === "string")))
   );
 }
 
@@ -138,6 +148,9 @@ export function hasCreatorBadge(creator: string | undefined): boolean {
   return isBadgeActive(getCreatorBadge(creator));
 }
 
+/** A membership may carry at most this many invoices in its renewal chain. */
+const MAX_INVOICE_CHAIN = 24;
+
 export function grantCreatorBadge(
   creator: string,
   sats: number,
@@ -148,12 +161,21 @@ export function grantCreatorBadge(
   const existing = getCreatorBadge(creator);
   // Renewing extends the current badge instead of losing the remaining days.
   const start = existing && isBadgeActive(existing) ? existing.expiresAt : now;
+  // Each payment joins the renewal chain, so verifiers can replay expiry.
+  const priorInvoices =
+    invoice && invoice !== existing?.invoice
+      ? [
+          ...(existing?.priorInvoices ?? []),
+          ...(existing?.invoice ? [existing.invoice] : []),
+        ].slice(-MAX_INVOICE_CHAIN + 1)
+      : existing?.priorInvoices;
   const badge: CreatorBadge = {
     creator,
     sats,
     purchasedAt: now,
     expiresAt: start + days * DAY_MS,
     invoice: invoice ?? existing?.invoice,
+    priorInvoices,
   };
   persist([...getBadges().filter((item) => item.creator !== creator), badge]);
   return badge;
@@ -180,6 +202,8 @@ export async function announceCreatorBadge(input: {
   sats: number;
   expiresAt: number;
   invoice?: string;
+  /** Older invoices this membership renewed on top of. */
+  priorInvoices?: string[];
   signAndPublish: (template: EventTemplate) => Promise<NostrEvent>;
 }): Promise<void> {
   const tags: string[][] = [
@@ -189,9 +213,10 @@ export async function announceCreatorBadge(input: {
     ["amount", String(input.sats)],
     ["expires", String(Math.floor(input.expiresAt / 1000))],
   ];
-  // The settled invoice lets the creator's key server verify the payment
-  // before handing over exclusive content keys.
+  // The settled invoice(s) let the creator's key server and the keybox verify
+  // the payment — and replay the renewal chain — before handing over keys.
   if (input.invoice) tags.push(["pr", input.invoice]);
+  if (input.priorInvoices?.length) tags.push(["pr-chain", ...input.priorInvoices]);
   await input.signAndPublish({
     kind: BADGE_ANNOUNCE_KIND,
     created_at: Math.floor(Date.now() / 1000),
@@ -415,12 +440,18 @@ export async function syncCreatorPurchases(pubkey: string): Promise<void> {
     const index = nextBadges.findIndex((badge) => badge.creator === creator);
     const existing = index >= 0 ? nextBadges[index] : null;
     if (existing && existing.expiresAt >= expiresAt) continue;
+    const invoice = tagValue(event, "pr");
+    const priorInvoices = event.tags
+      .filter((tag) => tag[0] === "pr-chain")
+      .flatMap((tag) => tag.slice(1))
+      .filter((value) => typeof value === "string" && value.length > 0);
     const badge: CreatorBadge = {
       creator,
       sats,
       purchasedAt: existing?.purchasedAt ?? event.created_at * 1000,
       expiresAt,
-      invoice: tagValue(event, "pr") || existing?.invoice,
+      invoice: invoice || existing?.invoice,
+      priorInvoices: priorInvoices.length > 0 ? priorInvoices : existing?.priorInvoices,
     };
     if (index >= 0) nextBadges[index] = badge;
     else nextBadges.push(badge);

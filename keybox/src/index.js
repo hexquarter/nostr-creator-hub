@@ -3,11 +3,14 @@
  *
  * The creator's Crays client deposits each encrypted post's content key here
  * (signed with a NIP-98 auth event, kind 27235), along with the prices the
- * post accepts. Readers redeem a settled BOLT-11 invoice for the key:
+ * post accepts. Readers redeem settled BOLT-11 invoices for the key:
  *
- *   - an invoice of at least the membership price, settled within the last 30
- *     days, unlocks every post of that creator (the subscription route, and
- *     with it the full post history);
+ *   - a membership redeems with its whole renewal chain; every invoice must
+ *     settle on the creator's own LUD-21 endpoint and be worth at least the
+ *     membership price, and each settled invoice extends the membership 30
+ *     days from the later of the previous expiry and its own timestamp. A
+ *     valid chain unlocks every post of that creator — history included —
+ *     and expiry is verifiable, not self-attested;
  *   - an invoice of at least the single-post price unlocks exactly one post —
  *     an invoice binds to the first post it redeems, so one cheap payment
  *     cannot unlock everything.
@@ -179,6 +182,21 @@ async function verifySettled(address, pr) {
   }
 }
 
+/**
+ * Settled checks are cached in KV for a day (positives only — an invoice can
+ * still settle after an "unsettled" answer, so negatives are never cached).
+ */
+async function isSettled(env, address, pr) {
+  const hash = await sha256Hex(pr);
+  const cached = await env.KEYBOX.get(`v:${hash}`);
+  if (cached === "1") return true;
+  const settled = (await verifySettled(address, pr)) === "settled";
+  if (settled) {
+    await env.KEYBOX.put(`v:${hash}`, "1", { expirationTtl: 60 * 60 * 24 });
+  }
+  return settled;
+}
+
 // ---------- Routing ----------
 
 function validHex64(value) {
@@ -225,11 +243,12 @@ async function handleList(request, env) {
   return jsonResponse({ posts });
 }
 
-async function handleRedeem(request, env) {
+async function handleRedeem(request, env, body) {
   const url = new URL(request.url);
-  const creator = url.searchParams.get("creator");
-  const postId = url.searchParams.get("post");
-  const pr = url.searchParams.get("pr");
+  const creator = body?.creator ?? url.searchParams.get("creator");
+  const postId = body?.post ?? url.searchParams.get("post");
+  const pr = body?.pr ?? url.searchParams.get("pr");
+  const older = Array.isArray(body?.chain) ? body.chain : [];
   if (!validHex64(creator) || !validHex64(postId)) {
     return jsonResponse({ error: "bad request" }, 400);
   }
@@ -240,26 +259,37 @@ async function handleRedeem(request, env) {
     return jsonResponse({ error: "payment required" }, 403);
   }
 
-  const settled = await verifySettled(record.address, pr);
-  if (settled !== "settled") return jsonResponse({ error: "payment not settled" }, 403);
-
-  const sats = invoiceAmountSats(pr);
-  const paidAt = invoiceTimestamp(pr);
-  const now = Math.floor(Date.now() / 1000);
-
-  // Subscription route: a settled invoice at or above the membership price,
-  // inside its 30-day window, covers every post of the creator — history
-  // included.
-  const membership =
-    record.badgeSats > 0 &&
-    sats >= record.badgeSats &&
-    paidAt > 0 &&
-    now - paidAt <= BADGE_DAYS_SECONDS;
-  if (membership) return jsonResponse({ key: record.key, via: "membership" });
+  // Membership route: the whole renewal chain must settle on the creator's
+  // own service, each invoice worth at least the membership price. Stacking
+  // math — each invoice extends the membership 30 days from the later of the
+  // previous expiry and its own timestamp — decides validity. A fabricated
+  // invoice never settles, so it counts for nothing; underpriced zaps never
+  // reach the floor, so they can't be replayed as renewals.
+  const chain = [pr, ...older.filter((item) => typeof item === "string" && item.length >= 50)];
+  let expiry = 0;
+  let counted = 0;
+  const seen = new Set();
+  const sorted = chain
+    .filter((item) => !seen.has(item) && seen.add(item))
+    .map((item) => ({ item, ts: invoiceTimestamp(item) }))
+    .filter((entry) => entry.ts > 0)
+    .sort((a, b) => a.ts - b.ts);
+  for (const entry of sorted) {
+    if (!(await isSettled(env, record.address, entry.item))) continue;
+    if (record.badgeSats > 0 && invoiceAmountSats(entry.item) < record.badgeSats) continue;
+    expiry = Math.max(expiry, entry.ts) + BADGE_DAYS_SECONDS;
+    counted += 1;
+  }
+  if (counted > 0 && Math.floor(Date.now() / 1000) <= expiry) {
+    return jsonResponse({ key: record.key, via: "membership" });
+  }
 
   // Single-post route: at or above the post price, and each invoice redeems
   // exactly one post — the first one it asks for.
-  if (record.unlockSats > 0 && sats >= record.unlockSats) {
+  if (record.unlockSats > 0 && invoiceAmountSats(pr) >= record.unlockSats) {
+    if (!(await isSettled(env, record.address, pr))) {
+      return jsonResponse({ error: "payment not settled" }, 403);
+    }
     const bindingKey = `inv:${await sha256Hex(pr)}`;
     const bound = await env.KEYBOX.get(bindingKey);
     if (bound) {
@@ -274,7 +304,7 @@ async function handleRedeem(request, env) {
     return jsonResponse({ key: record.key, via: "unlock" });
   }
 
-  return jsonResponse({ error: "amount too low" }, 403);
+  return jsonResponse({ error: "membership expired or amount too low" }, 403);
 }
 
 async function sha256Hex(text) {
@@ -289,9 +319,17 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
     try {
-      if (request.method === "POST" && url.pathname === "/keys") return await handleUpload(request, env);
-      if (request.method === "GET" && url.pathname === "/mine") return await handleList(request, env);
-      if (request.method === "GET" && url.pathname === "/keys") return await handleRedeem(request, env);
+      if (request.method === "POST" && url.pathname === "/keys")
+        return await handleUpload(request, env);
+      if (request.method === "POST" && url.pathname === "/keys/redeem") {
+        const body = await request.json().catch(() => null);
+        return await handleRedeem(request, env, body);
+      }
+      if (request.method === "GET" && url.pathname === "/mine")
+        return await handleList(request, env);
+      if (request.method === "GET" && url.pathname === "/keys") {
+        return await handleRedeem(request, env, null);
+      }
       return jsonResponse({ error: "not found" }, 404);
     } catch (error) {
       return jsonResponse({ error: String(error && error.message ? error.message : error) }, 500);

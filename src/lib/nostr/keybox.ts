@@ -75,19 +75,29 @@ export async function listKeyboxPosts(
   }
 }
 
-/** Redeem a settled invoice for a post's key. Null means "no key for you". */
+/**
+ * Redeem a settled invoice for a post's key. A membership redeems with its
+ * whole renewal chain; null means "no key for you".
+ */
 export async function fetchKeyFromKeybox(
   creator: string,
   postId: string,
   invoice?: string,
+  chain: string[] = [],
 ): Promise<string | null> {
   const base = keyboxUrl();
   if (!base || !invoice) return null;
   try {
-    const url = `${base}/keys?creator=${encodeURIComponent(creator)}&post=${encodeURIComponent(
-      postId,
-    )}&pr=${encodeURIComponent(invoice)}`;
-    const response = await fetch(url);
+    const response = await fetch(`${base}/keys/redeem`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        creator,
+        post: postId,
+        pr: invoice,
+        chain: chain.filter((pr) => typeof pr === "string" && pr.length >= 50),
+      }),
+    });
     if (!response.ok) return null;
     const body = (await response.json()) as { key?: unknown };
     if (typeof body.key !== "string" || body.key.length !== 64) return null;

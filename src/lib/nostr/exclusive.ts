@@ -41,6 +41,9 @@ const KEYREQ_TAG = "crays-keyreq";
 const KEY_BYTES = 32;
 const REQUEST_POLL_MS = 4000;
 const REQUEST_POLL_ATTEMPTS = 10;
+const BADGE_DAYS_SECONDS = 30 * 24 * 60 * 60;
+/** How many settled invoices a membership chain may carry (2 years of renewals). */
+const MAX_BADGE_CHAIN = 24;
 
 export function isEncryptedPost(event: NostrEvent): boolean {
   return event.tags.some((tag) => tag[0] === "encrypted" && tag[1] === EXCLUSIVE_SCHEME);
@@ -214,8 +217,14 @@ async function decryptAppData(
 
 // ---------- Publishing: seal a new post ----------
 
-/** Members with an active badge at publish time, straight from their receipts. */
-export async function fetchMemberPubkeys(creator: string, timeout = 6000): Promise<string[]> {
+/**
+ * Members with a currently-valid membership, straight from their receipts —
+ * but expiry is *verified*, not trusted: when a receipt carries its invoice
+ * chain, every invoice must settle on the creator's service and the stacking
+ * math decides validity. Receipts without payment proof (older clients) fall
+ * back to their self-attested `expires` tag.
+ */
+async function fetchVerifiedMembers(creator: string, address: string): Promise<string[]> {
   if (typeof window === "undefined") return [];
   const events = await queryEvents(
     {
@@ -223,16 +232,41 @@ export async function fetchMemberPubkeys(creator: string, timeout = 6000): Promi
       "#d": [badgeAnnouncementDTag(creator)],
       limit: 500,
     },
-    { timeout, fresh: true },
+    { timeout: 6000, fresh: true },
   );
-  const now = Math.floor(Date.now() / 1000);
-  const members = new Set<string>();
+  // One receipt per member: keep the newest event (it carries the full chain).
+  const latest = new Map<string, NostrEvent>();
   for (const event of events) {
-    const expires = Number(tagValue(event, "expires"));
-    if (!Number.isFinite(expires) || expires <= now) continue;
-    members.add(event.pubkey);
+    const current = latest.get(event.pubkey);
+    if (!current || current.created_at < event.created_at) latest.set(event.pubkey, event);
   }
-  return [...members];
+  const floor = await badgePriceFloorFor(creator);
+  const now = Date.now();
+  const members: string[] = [];
+  for (const [pubkey, event] of latest) {
+    const chain = badgeChainFromEvent(event);
+    if (chain.length > 0) {
+      const expiry = await badgeExpiryFromChain({ address, invoices: chain, floorSats: floor });
+      if (expiry && expiry > now) members.push(pubkey);
+      continue;
+    }
+    // Legacy receipt without payment proof: trust its expiry tag (the old
+    // behavior) so pre-chain members aren't locked out.
+    const expires = Number(tagValue(event, "expires"));
+    if (Number.isFinite(expires) && expires * 1000 > now) members.push(pubkey);
+  }
+  return members;
+}
+
+/** The membership's invoice chain as carried on its receipt event. */
+function badgeChainFromEvent(event: NostrEvent): string[] {
+  const chain = event.tags
+    .filter((tag) => tag[0] === "pr-chain")
+    .flatMap((tag) => tag.slice(1))
+    .filter((value) => typeof value === "string" && value.length >= 50);
+  const newest = tagValue(event, "pr");
+  if (newest && newest.length >= 50) chain.push(newest);
+  return chain;
 }
 
 /**
@@ -256,10 +290,14 @@ export async function deliverNewPostKeys(input: {
 }): Promise<{ delivered: number; failed: number; deposited: boolean }> {
   saveCachedKey(input.postId, input.key);
   const recipients = new Set<string>([input.creator]);
-  try {
-    (await fetchMemberPubkeys(input.creator)).forEach((pubkey) => recipients.add(pubkey));
-  } catch {
-    // Members unknown right now; they can still request the key.
+  if (input.address) {
+    try {
+      (await fetchVerifiedMembers(input.creator, input.address)).forEach((pubkey) =>
+        recipients.add(pubkey),
+      );
+    } catch {
+      // Members unknown right now; they can still request the key.
+    }
   }
   let delivered = 0;
   let failed = 0;
@@ -280,13 +318,24 @@ export async function deliverNewPostKeys(input: {
     }),
   );
   // Deposit the key with the keybox so readers who pay later — while the
-  // creator is offline — can still redeem their invoice for it.
+  // creator is offline — can still redeem their invoice for it. The stored
+  // membership price is the *floor*: the smaller of the just-set price and
+  // the cheapest price the creator has advertised recently, so members who
+  // paid before a price raise keep their renewals verifiable.
   let deposited = false;
   if (input.address) {
+    let badgeFloor = input.badgeSats ?? 0;
+    try {
+      const relayFloor = await badgePriceFloorFor(input.creator);
+      if (relayFloor > 0)
+        badgeFloor = badgeFloor > 0 ? Math.min(badgeFloor, relayFloor) : relayFloor;
+    } catch {
+      // Just use the composer's price.
+    }
     deposited = await uploadPostKey({
       signer: input.signer,
       address: input.address,
-      badgeSats: input.badgeSats ?? 0,
+      badgeSats: badgeFloor,
       unlockSats: input.unlockSats ?? 0,
       postId: input.postId,
       key: input.key,
@@ -394,14 +443,17 @@ export async function ensurePostKey(input: {
     // fall through to the keybox / request flows
   }
 
-  // The settled invoice is the payment proof the keybox redeems.
-  const invoice =
-    getCreatorBadge(input.creator)?.invoice ??
-    getPostUnlocks().find((unlock) => unlock.postId === input.postId)?.invoice;
+  // The settled invoice is the payment proof the keybox redeems. A
+  // membership redeems with its full invoice chain, so stacking renewals
+  // count toward a verifiable expiry.
+  const badge = getCreatorBadge(input.creator);
+  const unlock = getPostUnlocks().find((item) => item.postId === input.postId);
+  const invoice = badge?.invoice ?? unlock?.invoice;
+  const chain = badge ? (badge.priorInvoices ?? []) : [];
 
   if (invoice && keyboxUrl()) {
     try {
-      const fromKeybox = await fetchKeyFromKeybox(input.creator, input.postId, invoice);
+      const fromKeybox = await fetchKeyFromKeybox(input.creator, input.postId, invoice, chain);
       if (fromKeybox) {
         saveCachedKey(input.postId, fromKeybox);
         return fromKeybox;
@@ -499,6 +551,142 @@ async function verifySettledInvoice(
   }
 }
 
+// ---------- Verifiable membership expiry ----------
+
+// Minimal bech32 decoding (BOLT-11 uses bech32), to read an invoice's
+// creation timestamp — the anchor that makes expiry verifiable.
+const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+function bech32Polymod(values: number[]) {
+  const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  let chk = 1;
+  for (const value of values) {
+    const top = chk >> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ value;
+    for (let i = 0; i < 5; i++) if ((top >> i) & 1) chk ^= GEN[i];
+  }
+  return chk;
+}
+
+function bech32DecodeWords(value: string, limit: number): number[] {
+  const lower = value.toLowerCase();
+  if (lower.length > limit) throw new Error("too long");
+  const separator = lower.lastIndexOf("1");
+  if (separator < 1 || separator + 7 > lower.length) throw new Error("invalid bech32");
+  const hrp = lower.slice(0, separator);
+  const words: number[] = [];
+  for (const char of lower.slice(separator + 1)) {
+    const index = BECH32_CHARSET.indexOf(char);
+    if (index === -1) throw new Error("invalid character");
+    words.push(index);
+  }
+  const values = [
+    ...[...hrp].map((c) => c.charCodeAt(0) >> 5),
+    0,
+    ...[...hrp].map((c) => c.charCodeAt(0) & 31),
+    ...words,
+  ];
+  if (bech32Polymod(values) !== 1) throw new Error("bad checksum");
+  return words.slice(0, -6);
+}
+
+/** Invoice creation time in seconds, 0 when it can't be decoded. */
+export function invoiceTimestamp(pr: string): number {
+  try {
+    const words = bech32DecodeWords(pr, 2000);
+    let ts = 0;
+    for (let i = 0; i < 7; i++) ts = ts * 32 + words[i];
+    return ts;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Settled-invoice check results. Positives are trusted for a day; negatives
+ * expire quickly because an invoice can settle minutes after the check.
+ */
+const invoiceCheckCache = new Map<string, { at: number; settled: boolean }>();
+
+async function isInvoiceSettled(address: string, invoice: string): Promise<boolean> {
+  const cached = invoiceCheckCache.get(invoice);
+  const ttl = cached?.settled ? 24 * 60 * 60 * 1000 : 2 * 60 * 1000;
+  if (cached && Date.now() - cached.at < ttl) return cached.settled;
+  const status = await verifySettledInvoice(address, invoice);
+  if (status === "unsupported") return false;
+  const settled = status === "settled";
+  if (invoiceCheckCache.size > 500) invoiceCheckCache.clear();
+  invoiceCheckCache.set(invoice, { at: Date.now(), settled });
+  return settled;
+}
+
+/**
+ * Verifiable expiry of a membership from its chain of settled invoices.
+ *
+ * Every invoice must settle on the creator's own service (so a fabricated
+ * invoice with a far-future timestamp counts for nothing) and be worth at
+ * least `floorSats` (so zaps can't be replayed as renewals). The stacking
+ * rule mirrors `grantCreatorBadge` exactly: each payment extends the
+ * membership 30 days from the later of the previous expiry and the payment
+ * date. Returns the expiry in ms, or null when nothing is verifiable.
+ */
+async function badgeExpiryFromChain(input: {
+  address: string;
+  invoices: string[];
+  floorSats: number;
+}): Promise<number | null> {
+  const seen = new Set<string>();
+  const entries = input.invoices
+    .filter((pr) => typeof pr === "string" && pr.length >= 50 && !seen.has(pr) && seen.add(pr))
+    .map((pr) => ({ pr, ts: invoiceTimestamp(pr) }))
+    .filter((entry) => entry.ts > 0)
+    .sort((a, b) => a.ts - b.ts);
+  if (entries.length === 0) return null;
+  let expirySeconds = 0;
+  let counted = 0;
+  for (const entry of entries) {
+    if (!(await isInvoiceSettled(input.address, entry.pr))) continue;
+    if (input.floorSats > 0 && getSatoshisAmountFromBolt11(entry.pr) < input.floorSats) continue;
+    expirySeconds = Math.max(expirySeconds, entry.ts) + BADGE_DAYS_SECONDS;
+    counted += 1;
+  }
+  return counted > 0 ? expirySeconds * 1000 : null;
+}
+
+let cachedBadgePriceFloor: { creator: string; sats: number; at: number } | null = null;
+
+/**
+ * The smallest membership price the creator has advertised recently. Used as
+ * the floor when counting invoices as renewals, so members who paid a price
+ * that was later raised stay valid, while underpriced junk (zaps) doesn't.
+ */
+async function badgePriceFloorFor(creator: string): Promise<number> {
+  if (
+    cachedBadgePriceFloor?.creator === creator &&
+    Date.now() - cachedBadgePriceFloor.at < 10 * 60 * 1000
+  ) {
+    return cachedBadgePriceFloor.sats;
+  }
+  try {
+    const events = await queryEvents(
+      { kinds: [1, 30023], authors: [creator], limit: 100 },
+      { timeout: 5000, fresh: true },
+    );
+    const prices = events
+      .map((event) => tagValue(event, "premium"))
+      .filter(isFinitePrice)
+      .map((value) => Number(value));
+    if (prices.length > 0) {
+      const sats = Math.min(...prices);
+      cachedBadgePriceFloor = { creator, sats, at: Date.now() };
+      return sats;
+    }
+  } catch {
+    // Floor unknown; callers treat 0 as "no per-invoice amount check".
+  }
+  return 0;
+}
+
 let cachedBadgePrice: { creator: string; sats: number; at: number } | null = null;
 
 /** The creator's monthly membership price, from their latest premium post. */
@@ -589,9 +777,11 @@ async function hasValidReceipt(input: {
 }
 
 /**
- * Decide whether a requester may receive the key. A settled invoice on the
- * creator's own service is the strongest proof; the signed receipts are the
- * fallback when that service can't verify payments.
+ * Decide whether a requester may receive the key. Membership validity comes
+ * from the requester's receipt invoice chain (every invoice verified settled
+ * on the creator's own service, stacking math for expiry) — never from the
+ * self-attested `expires` tag when payment proof exists. Receipts without
+ * proof fall back to the tag, the pre-chain behavior.
  */
 async function authorizeRequest(input: {
   creator: string;
@@ -599,25 +789,108 @@ async function authorizeRequest(input: {
   request: KeyRequestEvent;
 }): Promise<boolean> {
   const { request } = input;
+
+  // A settled invoice attached to the request itself proves payment for this
+  // post when it covers the cheapest legitimate route to it.
   if (request.invoice) {
-    const status = await verifySettledInvoice(input.address, request.invoice);
-    if (status === "settled") {
-      const expected = await expectedPriceFor({ creator: input.creator, postId: request.postId });
-      let paid = 0;
-      try {
-        paid = getSatoshisAmountFromBolt11(request.invoice);
-      } catch {
-        paid = 0;
-      }
-      return expected === 0 ? true : paid >= expected;
+    const settled = await isInvoiceSettled(input.address, request.invoice);
+    if (!settled) return false;
+    const expected = await expectedPriceFor({ creator: input.creator, postId: request.postId });
+    let paid = 0;
+    try {
+      paid = getSatoshisAmountFromBolt11(request.invoice);
+    } catch {
+      paid = 0;
     }
-    if (status === "unsettled") return false;
-    // "unsupported": the creator's Lightning service can't verify invoices.
+    if (expected === 0 || paid >= expected) return true;
+    // The invoice is real but small: it may be a membership payment — check
+    // the receipt chain before denying.
   }
-  return hasValidReceipt({
+
+  // Membership route: verify the requester's own receipt chain.
+  if (
+    await hasVerifiedMembership({
+      requester: request.requester,
+      creator: input.creator,
+      address: input.address,
+    })
+  ) {
+    return true;
+  }
+
+  // Legacy fallback: receipts without payment proof (old clients, dev sim).
+  return hasLegacyReceipt({
     requester: request.requester,
     creator: input.creator,
     postId: request.postId,
+  });
+}
+
+/** Verify the requester's badge receipt against its settled invoice chain. */
+async function hasVerifiedMembership(input: {
+  requester: string;
+  creator: string;
+  address: string;
+}): Promise<boolean> {
+  let events: NostrEvent[] = [];
+  try {
+    events = await queryEvents(
+      {
+        kinds: [BADGE_ANNOUNCE_KIND],
+        authors: [input.requester],
+        "#d": [badgeAnnouncementDTag(input.creator)],
+        limit: 1,
+      },
+      { timeout: 5000, fresh: true },
+    );
+  } catch {
+    return false;
+  }
+  const event = events.sort((a, b) => b.created_at - a.created_at)[0];
+  if (!event) return false;
+  const chain = badgeChainFromEvent(event);
+  if (chain.length === 0) return false;
+  const floor = await badgePriceFloorFor(input.creator);
+  const expiry = await badgeExpiryFromChain({
+    address: input.address,
+    invoices: chain,
+    floorSats: floor,
+  });
+  return Boolean(expiry && expiry > Date.now());
+}
+
+/** Pre-chain receipts: trust the self-attested expiry / existence. */
+async function hasLegacyReceipt(input: {
+  requester: string;
+  creator: string;
+  postId: string;
+}): Promise<boolean> {
+  const filters: Filter[] = [
+    {
+      kinds: [BADGE_ANNOUNCE_KIND],
+      authors: [input.requester],
+      "#d": [postUnlockAnnouncementDTag(input.postId)],
+      limit: 1,
+    },
+    {
+      kinds: [BADGE_ANNOUNCE_KIND],
+      authors: [input.requester],
+      "#d": [badgeAnnouncementDTag(input.creator)],
+      limit: 1,
+    },
+  ];
+  const results = await Promise.allSettled(
+    filters.map((filter) => queryEvents(filter, { timeout: 5000, fresh: true })),
+  );
+  const now = Math.floor(Date.now() / 1000);
+  return results.some((result) => {
+    if (result.status !== "fulfilled") return false;
+    return result.value.some((event) => {
+      const d = tagValue(event, "d") ?? "";
+      if (d.startsWith("crays:unlock:")) return true;
+      const expires = Number(tagValue(event, "expires"));
+      return d.startsWith("crays:badge:") && Number.isFinite(expires) && expires > now;
+    });
   });
 }
 
@@ -703,7 +976,7 @@ export async function syncCreatorKeysToKeybox(input: {
   const stored = await listKeyboxPosts(input.signer, input.creator);
   if (!stored) return 0; // keybox unreachable — nothing to sync against
   const storedSet = new Set(stored);
-  const badgeSats = await badgePriceFor(input.creator);
+  const badgeSats = await badgePriceFloorFor(input.creator);
   let uploaded = 0;
   for (const [postId, key] of getOwnedKeys()) {
     if (storedSet.has(postId)) continue;

@@ -123,10 +123,29 @@ cannot read the text.
   reader's signed kind-30078 purchase receipt (the same self-attested trust
   model as before).
 
-Two honest limits of the client-only design: keys cannot be revoked once
-delivered (an expired member keeps access to posts they already unlocked —
-future posts simply stop being unlocked), and the creator's client must be
-online for a purchase made after publication to decrypt.
+### Expiry that can't be lied about
+
+A membership's validity is **verified from its payment history**, never taken
+from a reader's claim. Every purchase joins the membership's invoice chain
+(stored on the reader's badge and on their signed receipt event). Any verifier
+— the creator's key server, the publish-time member list, the keybox — replays
+that chain: each invoice must settle on the creator's own LUD-21 endpoint and
+be worth at least the membership price (the smallest price the creator ever
+advertised recently, so members who paid before a price raise stay valid while
+zaps can't be replayed as renewals), and each settled invoice extends the
+membership 30 days from the later of the previous expiry and its own timestamp
+— the exact same stacking the local badge uses.
+
+The result: an expired member keeps everything that was already delivered to
+them (inherent to handing over a key), but can no longer obtain keys for
+anything newer — publish-time delivery, key requests, and keybox redemption
+all re-verify the chain. Fabricated invoices never settle; fabricated expiry
+tags are ignored whenever payment proof exists. Receipts without proof (older
+clients, dev simulation) keep the legacy trusted-expiry fallback.
+
+Two honest limits of the client-only design: the creator's client must be
+online for a purchase made after publication to decrypt (unless the keybox is
+deployed).
 
 ### Creator offline: the keybox
 

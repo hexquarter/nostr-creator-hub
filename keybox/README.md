@@ -19,11 +19,15 @@ online" requirement.
   here, authenticated with a [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md)
   event (kind 27235), together with the membership price and the post's
   unlock price.
-- **Redeem** — a reader who paid sends their settled BOLT-11 invoice; the
+- **Redeem** — a reader who paid sends their settled BOLT-11 invoice(s); the
   keybox verifies settlement against the **creator's own LUD-21 `verify`
-  endpoint**, then checks the amount:
-  - ≥ membership price and settled within the last 30 days → key for **any**
-    post of that creator (subscription route — full history);
+  endpoint** (results cached in KV for a day), then checks the amounts:
+  - a **membership** redeems with its whole renewal chain: every invoice must
+    settle and be worth at least the membership price, and each one extends
+    the membership 30 days from the later of the previous expiry and its own
+    timestamp — a valid chain unlocks **any** post of that creator (full
+    history). Expiry is verifiable, not self-attested, so an expired member
+    can't redeem old invoices for new posts;
   - ≥ the post's unlock price → key for **that one post**; an invoice binds to
     the first post it redeems, so one cheap payment can't unlock everything.
 - The keybox holds **no Nostr keys** and never signs events. Its only power is
@@ -41,9 +45,9 @@ npx wrangler deploy
 
 Then point the app at it at build time:
 
-| Variable                  | Purpose                                                                                    |
-| ------------------------- | ------------------------------------------------------------------------------------------ |
-| `VITE_CRAYS_KEYBOX_URL`   | Base URL of your deployed keybox (e.g. `https://crays-keybox.your-name.workers.dev`).       |
+| Variable                | Purpose                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------- |
+| `VITE_CRAYS_KEYBOX_URL` | Base URL of your deployed keybox (e.g. `https://crays-keybox.your-name.workers.dev`). |
 
 Without it, the app behaves exactly as before: relay-delivered keys while the
 creator is online, plus their signed key requests.

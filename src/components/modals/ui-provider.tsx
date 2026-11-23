@@ -234,7 +234,8 @@ function grantMoonPayPurchase(order: PendingMoonPayOrder, signAndPublish: SignAn
     creator: order.creator,
     sats: order.sats,
     expiresAt: badge.expiresAt,
-    invoice: order.invoice,
+    invoice: badge.invoice,
+    priorInvoices: badge.priorInvoices,
     signAndPublish,
   }).catch(() => undefined);
   return `Membership active — ${daysLeft(badge)} days of members-only posts`;
@@ -1225,12 +1226,14 @@ function BadgeModal({
     }
     const badge = grantCreatorBadge(creator, sats, BADGE_DAYS, invoice);
     // Signed proof of the purchase: lets the creator count members and lets
-    // this reader restore the membership on another device.
+    // this reader restore the membership on another device. The invoice
+    // chain rides along so verifiers can replay the expiry.
     void announceCreatorBadge({
       creator,
       sats,
       expiresAt: badge.expiresAt,
-      invoice,
+      invoice: badge.invoice,
+      priorInvoices: badge.priorInvoices,
       signAndPublish: nostr.signAndPublish,
     }).catch(() => undefined);
     toast.success(`Membership active — ${daysLeft(badge)} days of members-only posts`);
