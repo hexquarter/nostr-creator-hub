@@ -521,6 +521,52 @@ const inputCls =
   "w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-[13.5px] text-zinc-900 placeholder:text-zinc-400 outline-none focus:border-brand focus:ring-2 focus:ring-brand/20";
 
 // ---------- Zap ----------
+// ---------- Amount units ----------
+type AmountUnit = "usd" | "sats";
+
+/** Format sats as a plain USD number string for amount inputs. */
+function usdTextForSats(sats: number, priceUsd: number | null | undefined) {
+  if (!priceUsd || sats <= 0) return "";
+  const usd = (sats / 100_000_000) * priceUsd;
+  return usd >= 0.01 ? usd.toFixed(2) : usd.toPrecision(2);
+}
+
+/** Parse an amount typed in the current unit into canonical sats. */
+function textToSats(text: string, unit: AmountUnit, priceUsd: number | null | undefined) {
+  const value = Number(text.replace(/[$,\s]/g, ""));
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (unit === "sats") return Math.round(value);
+  if (!priceUsd) return 0;
+  return Math.round((value / priceUsd) * 100_000_000);
+}
+
+function AmountUnitToggle({
+  unit,
+  onChange,
+}: {
+  unit: AmountUnit;
+  onChange: (unit: AmountUnit) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-lg bg-zinc-100 p-0.5 text-[10.5px] font-semibold">
+      {(["usd", "sats"] as const).map((option) => (
+        <button
+          key={option}
+          type="button"
+          onClick={() => onChange(option)}
+          className={`rounded-md px-2.5 py-1 transition-colors ${
+            unit === option
+              ? "bg-white text-zinc-900 shadow-sm"
+              : "text-zinc-500 hover:text-zinc-700"
+          }`}
+        >
+          {option === "usd" ? "USD" : "sats"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ZapModal({
   open,
   onClose,
@@ -536,7 +582,10 @@ function ZapModal({
   const devSettings = useDevPaymentSettings();
   const lightningDisabled = DEV_PAYMENTS_ENABLED && devSettings.disableLightning;
   const presets = [21, 100, 500, 1000, 5000, 21000];
-  const [amount, setAmount] = useState(500);
+  // Amounts default to USD; sats is the canonical unit the zap pays in.
+  const [unit, setUnit] = useState<AmountUnit>("usd");
+  const [amountText, setAmountText] = useState("");
+  const amount = textToSats(amountText, unit, price?.usd);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(options.profile ?? null);
@@ -545,7 +594,8 @@ function ZapModal({
 
   useEffect(() => {
     if (!open) return;
-    setAmount(500);
+    setUnit("usd");
+    setAmountText(usdTextForSats(500, price?.usd));
     setNote("");
     setBusy(false);
     setNwcUri("");
@@ -555,6 +605,7 @@ function ZapModal({
         .then((next) => setProfile(next))
         .catch(() => undefined);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, options.profile, options.pubkey]);
 
   const usd = formatUsd(satsToUsd(amount, price));
@@ -578,6 +629,12 @@ function ZapModal({
     }
     if (!profile) {
       toast.error("Open the creator's profile to zap them.");
+      return;
+    }
+    if (amount <= 0) {
+      toast.error(
+        unit === "usd" && !price ? "Waiting for the live BTC price…" : "Enter an amount.",
+      );
       return;
     }
     // The zap payment itself branches in nostr.zap: the self-custodial browser
@@ -637,27 +694,51 @@ function ZapModal({
             <div className="mt-1 flex items-baseline justify-center gap-1.5">
               <input
                 type="number"
-                min={1}
-                value={amount}
-                onChange={(e) => setAmount(Math.max(1, Number(e.target.value) || 0))}
+                min={0}
+                step={unit === "usd" ? "0.01" : "1"}
+                value={amountText}
+                onChange={(e) => setAmountText(e.target.value)}
                 className="w-32 bg-transparent text-center text-[36px] font-bold tracking-tight text-zinc-900 outline-none"
               />
-              <span className="text-[13px] font-medium text-zinc-500">sats</span>
+              <span className="text-[13px] font-medium text-zinc-500">
+                {unit === "usd" ? "USD" : "sats"}
+              </span>
             </div>
-            <p className="text-[11.5px] text-zinc-500">≈ {usd} USD</p>
+            <p className="text-[11.5px] text-zinc-500">
+              {unit === "usd" ? `≈ ${amount.toLocaleString()} sats` : `≈ ${usd} USD`}
+            </p>
+            <div className="mt-2 flex justify-center">
+              <AmountUnitToggle
+                unit={unit}
+                onChange={(next) => {
+                  setAmountText(
+                    next === "usd"
+                      ? usdTextForSats(amount, price?.usd)
+                      : amount > 0
+                        ? String(amount)
+                        : "",
+                  );
+                  setUnit(next);
+                }}
+              />
+            </div>
           </div>
           <div className="grid grid-cols-3 gap-2">
             {presets.map((p) => (
               <button
                 key={p}
-                onClick={() => setAmount(p)}
+                onClick={() =>
+                  setAmountText(
+                    unit === "usd" ? usdTextForSats(p, price?.usd) || String(p) : String(p),
+                  )
+                }
                 className={`rounded-lg py-2 text-[12px] font-semibold ring-1 transition-colors ${
                   amount === p
                     ? "bg-zinc-900 text-white ring-zinc-900"
                     : "bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50"
                 }`}
               >
-                {p.toLocaleString()}
+                {unit === "usd" && price ? `$${usdTextForSats(p, price.usd)}` : p.toLocaleString()}
               </button>
             ))}
           </div>
@@ -704,7 +785,11 @@ function ZapModal({
           <PrimaryBtn
             className="!bg-amber-500 hover:!bg-amber-600"
             disabled={
-              lightningDisabled || busy || !profile || !(breez.available || nostr.wallet.connected)
+              lightningDisabled ||
+              busy ||
+              !profile ||
+              amount <= 0 ||
+              !(breez.available || nostr.wallet.connected)
             }
             onClick={send}
           >
@@ -2263,11 +2348,14 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const breezSend = breez.available;
   const nwcSend = !breezSend && nostr.wallet.connected;
   const canPay = breezSend || nwcSend || breez.canCreate;
+  // Amounts default to USD; sats is the canonical unit payments settle in.
+  const [unit, setUnit] = useState<AmountUnit>("usd");
 
   useEffect(() => {
     if (open) {
       setDest("");
       setAmount("");
+      setUnit("usd");
       setBusy(false);
     }
   }, [open]);
@@ -2276,11 +2364,25 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   // addresses/LNURL) need the amount input.
   const invoiceSats = isLightningInvoice(dest) ? bolt11AmountSats(dest) : null;
   const sats = isLightningInvoice(dest)
-    ? (invoiceSats ?? (Number(amount) || 0))
-    : Number(amount) || 0;
+    ? (invoiceSats ?? textToSats(amount, unit, price?.usd))
+    : textToSats(amount, unit, price?.usd);
   const usd = formatUsd(satsToUsd(sats, price));
+  const switchUnit = (next: AmountUnit) => {
+    if (next === unit) return;
+    const current = textToSats(amount, unit, price?.usd);
+    setAmount(
+      next === "usd" ? usdTextForSats(current, price?.usd) : current > 0 ? String(current) : "",
+    );
+    setUnit(next);
+  };
 
   const send = async () => {
+    if (sats <= 0) {
+      toast.error(
+        unit === "usd" && !price ? "Waiting for the live BTC price…" : "Enter an amount.",
+      );
+      return;
+    }
     setBusy(true);
     try {
       const invoice = isLightningInvoice(dest)
@@ -2334,16 +2436,33 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
               />
             </Field>
             {invoiceSats == null && (
-              <Field label="Amount (sats)" hint={sats ? `≈ ${usd}` : undefined}>
+              <Field
+                label="Amount"
+                hint={
+                  unit === "usd"
+                    ? sats
+                      ? `≈ ${sats.toLocaleString()} sats`
+                      : undefined
+                    : sats
+                      ? `≈ ${usd}`
+                      : undefined
+                }
+              >
                 <input
                   type="number"
-                  min={1}
+                  min={0}
+                  step={unit === "usd" ? "0.01" : "1"}
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   className={inputCls}
-                  placeholder="0"
+                  placeholder={unit === "usd" ? "0.00" : "0"}
                 />
               </Field>
+            )}
+            {invoiceSats == null && (
+              <div className="flex justify-end">
+                <AmountUnitToggle unit={unit} onChange={switchUnit} />
+              </div>
             )}
           </>
         )}
@@ -2367,7 +2486,10 @@ function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void })
   // receive destination; the profile address (external) is the fallback.
   const address = (breez.available ? breez.address : null) ?? nostr.wallet.address;
   const [invoiceMode, setInvoiceMode] = useState(false);
-  const [amount, setAmount] = useState(1000);
+  // Amounts default to USD; sats is the canonical unit the invoice is for.
+  const [unit, setUnit] = useState<AmountUnit>("usd");
+  const [amountText, setAmountText] = useState("");
+  const amount = textToSats(amountText, unit, price?.usd);
   const [invoice, setInvoice] = useState("");
   const [busy, setBusy] = useState(false);
   // The self-custodial Crays wallet creates real BOLT-11 invoices, and is set
@@ -2380,7 +2502,8 @@ function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void })
   useEffect(() => {
     if (open) {
       setInvoiceMode(false);
-      setAmount(1000);
+      setUnit("usd");
+      setAmountText("");
       setInvoice("");
       setBusy(false);
     }
@@ -2478,15 +2601,45 @@ function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void })
             )}
           </div>
         ) : (nostr.wallet.connected || breezReceive) && invoiceMode ? (
-          <Field label="Amount (sats)" hint={formatUsd(satsToUsd(amount, price))}>
-            <input
-              type="number"
-              min={1}
-              value={amount}
-              onChange={(e) => setAmount(Math.max(1, Number(e.target.value) || 1))}
-              className={inputCls}
-            />
-          </Field>
+          <>
+            <Field
+              label="Amount"
+              hint={
+                unit === "usd"
+                  ? amount
+                    ? `≈ ${amount.toLocaleString()} sats`
+                    : undefined
+                  : amount
+                    ? `≈ ${formatUsd(satsToUsd(amount, price))}`
+                    : undefined
+              }
+            >
+              <input
+                type="number"
+                min={0}
+                step={unit === "usd" ? "0.01" : "1"}
+                value={amountText}
+                onChange={(e) => setAmountText(e.target.value)}
+                className={inputCls}
+                placeholder={unit === "usd" ? "0.00" : "0"}
+              />
+            </Field>
+            <div className="flex justify-end">
+              <AmountUnitToggle
+                unit={unit}
+                onChange={(next) => {
+                  setAmountText(
+                    next === "usd"
+                      ? usdTextForSats(amount, price?.usd)
+                      : amount > 0
+                        ? String(amount)
+                        : "",
+                  );
+                  setUnit(next);
+                }}
+              />
+            </div>
+          </>
         ) : !nostr.wallet.connected && !breezReceive ? (
           <WalletConnectBlock />
         ) : null}
