@@ -3961,50 +3961,56 @@ function AuthModal({
           <DialogDescription className="mt-1 max-w-[300px] text-[13px] leading-relaxed text-zinc-500">
             {intentSentence
               ? intentSentence
-              : isCreate
-                ? "No password, no seed phrase. Your face, fingerprint or device PIN is all you need."
-                : "Unlock your account with your face, fingerprint or device PIN."}
+              : advancedOpen
+                ? "Sign in with a signer app, a browser extension, or a private key you already have."
+                : isCreate
+                  ? "No password, no seed phrase. Your face, fingerprint or device PIN is all you need."
+                  : "Unlock your account with your face, fingerprint or device PIN."}
           </DialogDescription>
         </DialogHeader>
 
-        <button
-          disabled={!!busy || !passkeyReady}
-          onClick={() =>
-            void run(
-              "Waiting for passkey…",
-              () => nostr.signInWithPasskey(mode).then(() => undefined),
-              isCreate ? "Account created" : "Signed in with your passkey",
-            )
-          }
-          className="mt-6 flex w-full items-center justify-center gap-2.5 rounded-xl bg-zinc-900 px-4 py-3.5 text-[14px] font-semibold text-white shadow-sm transition-colors hover:bg-black disabled:opacity-60"
-        >
-          {busy ? (
-            <>
-              <Loader2 className="size-[18px] animate-spin" /> {busy}
-            </>
-          ) : (
-            <>
-              <Fingerprint className="size-[18px]" />{" "}
-              {isCreate ? "Create account with passkey" : "Continue with passkey"}
-            </>
-          )}
-        </button>
+        {!advancedOpen && (
+          <>
+            <button
+              disabled={!!busy || !passkeyReady}
+              onClick={() =>
+                void run(
+                  "Waiting for passkey…",
+                  () => nostr.signInWithPasskey(mode).then(() => undefined),
+                  isCreate ? "Account created" : "Signed in with your passkey",
+                )
+              }
+              className="mt-6 flex w-full items-center justify-center gap-2.5 rounded-xl bg-zinc-900 px-4 py-3.5 text-[14px] font-semibold text-white shadow-sm transition-colors hover:bg-black disabled:opacity-60"
+            >
+              {busy ? (
+                <>
+                  <Loader2 className="size-[18px] animate-spin" /> {busy}
+                </>
+              ) : (
+                <>
+                  <Fingerprint className="size-[18px]" />{" "}
+                  {isCreate ? "Create account with passkey" : "Continue with passkey"}
+                </>
+              )}
+            </button>
 
-        {!passkeyReady && (
-          <p className="mt-2 text-center text-[11.5px] text-amber-700">
-            Passkeys aren't available in this browser. Use one of the options below.
-          </p>
+            {!passkeyReady && (
+              <p className="mt-2 text-center text-[11.5px] text-amber-700">
+                Passkeys aren't available in this browser. Use one of the options below.
+              </p>
+            )}
+
+            <p className="mt-3 text-center text-[12px] text-zinc-500">
+              {isCreate ? "Already have an account?" : "New to Crays?"}{" "}
+              <button
+                onClick={() => setMode(isCreate ? "signin" : "create")}
+                className="font-semibold text-brand hover:underline"
+              >
+                {isCreate ? "Sign in" : "Create one"}
+              </button>
+            </p>
+          </>
         )}
-
-        <p className="mt-3 text-center text-[12px] text-zinc-500">
-          {isCreate ? "Already have an account?" : "New to Crays?"}{" "}
-          <button
-            onClick={() => setMode(isCreate ? "signin" : "create")}
-            className="font-semibold text-brand hover:underline"
-          >
-            {isCreate ? "Sign in" : "Create one"}
-          </button>
-        </p>
 
         <div className="mt-6 border-t border-zinc-100 pt-4">
           <button
@@ -4047,7 +4053,11 @@ function AuthModal({
 
               {method && (
                 <button
-                  onClick={() => setMethod(null)}
+                  onClick={() => {
+                    setMethod(null);
+                    // Returning from a method brings the passkey view back.
+                    setAdvancedOpen(false);
+                  }}
                   className="mb-2 flex items-center gap-1 text-[11.5px] font-medium text-zinc-400 hover:text-zinc-700"
                 >
                   <ChevronLeft className="size-3.5" /> Back
