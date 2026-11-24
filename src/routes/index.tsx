@@ -65,7 +65,7 @@ function Home() {
           tab === "following" && nostr.following.length > 0
             ? nostr.following.slice(0, 100)
             : undefined;
-        const result = await fetchFeed({ limit: 40, authors, timeout: 9000 });
+        const result = await fetchFeed({ limit: 60, authors, timeout: 9000 });
         // Picture-first feed: NIP-68 media and posts carrying images/videos
         // lead, pure-text notes follow — each group newest first.
         const visualFirst = (list: FeedNote[]) => {

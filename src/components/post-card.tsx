@@ -16,6 +16,7 @@ import {
   CreditCard,
   Heart,
   Loader2,
+  Play,
 } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
@@ -133,6 +134,7 @@ export function PostCard({ post, flat = false }: { post: Post; flat?: boolean })
   const [likersLoading, setLikersLoading] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<string>>(() => new Set());
+  const [failedVideos, setFailedVideos] = useState<Set<string>>(() => new Set());
   const [showThread, setShowThread] = useState(false);
   const [threadNotes, setThreadNotes] = useState<FeedNote[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
@@ -600,6 +602,32 @@ export function PostCard({ post, flat = false }: { post: Post; flat?: boolean })
             const dim = nip68Media.find((item) => item.url === url)?.dim;
             const [, width, height] = dim ? (/(\d+)x(\d+)/.exec(dim) ?? []) : [];
             const known = Boolean(width && height);
+            // X/Twitter amplify URLs hotlink-protect their CDN and expire;
+            // when the clip can't load, offer the direct link instead.
+            if (failedVideos.has(url)) {
+              return (
+                <div
+                  key={url}
+                  className={`relative flex flex-col items-center justify-center gap-2 overflow-hidden bg-zinc-900 ${bleed} ${
+                    known ? "" : "aspect-video"
+                  }`}
+                  style={known ? { aspectRatio: `${width} / ${height}` } : undefined}
+                >
+                  <Play className="size-6 text-zinc-600" />
+                  <p className="px-6 text-center text-[11.5px] leading-relaxed text-zinc-400">
+                    This video is hosted on X and can't be played here.
+                  </p>
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="rounded-full bg-white px-3 py-1.5 text-[11.5px] font-semibold text-zinc-900 ring-1 ring-zinc-200 transition-colors hover:bg-zinc-100"
+                  >
+                    Open video
+                  </a>
+                </div>
+              );
+            }
             return (
               <div
                 key={url}
@@ -619,6 +647,8 @@ export function PostCard({ post, flat = false }: { post: Post; flat?: boolean })
                   loop
                   playsInline
                   preload="metadata"
+                  ref={(el) => el?.setAttribute("referrerpolicy", "no-referrer")}
+                  onError={() => setFailedVideos((prev) => new Set(prev).add(url))}
                   className={`size-full ${known ? "object-contain" : "object-cover"}`}
                 />
               </div>

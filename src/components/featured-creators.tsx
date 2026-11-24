@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Play, X } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { AvatarTile } from "./avatar-tile";
@@ -8,11 +8,20 @@ import { noteFromEvent, noteIsReply, type FeedNote } from "@/lib/nostr/social";
 import { queryEvents } from "@/lib/nostr/relays";
 import type { Profile } from "@/lib/nostr/profiles";
 
+/** How many featured creators the section surfaces. */
+const FEATURED_LIMIT = 10;
+/** Vertical stories kept per creator. */
+const STORIES_PER_CREATOR = 6;
+/** How deep the per-creator media fetch goes. */
+const MEDIA_FETCH_LIMIT = 150;
+
 type CreatorMedia = {
   note: FeedNote;
   image?: string;
   video?: string;
   poster?: string;
+  /** Width / height from the NIP-68 `dim` tag, when declared. */
+  ratio?: number;
   /** True when the asset is known to be vertical (declared or probed). */
   vertical?: boolean;
 };
@@ -24,152 +33,52 @@ function toCreatorMedia(note: FeedNote): CreatorMedia | null {
   // NIP-68 declares dimensions; treat a portrait ratio as story-like.
   const dim = note.media[0]?.dim;
   const match = dim ? /(\d+)x(\d+)/.exec(dim) : null;
+  const ratio = match ? Number(match[1]) / Number(match[2]) : undefined;
   const vertical = video
-    ? match
-      ? Number(match[2]) / Number(match[1]) > 1.05
+    ? ratio !== undefined
+      ? ratio < 1.05
       : true
-    : match
-      ? Number(match[2]) / Number(match[1]) > 1.05
+    : ratio !== undefined
+      ? ratio < 1.05
       : undefined;
-  return { note, image: note.images[0], video, poster, vertical };
+  return { note, image: note.images[0], video, poster, ratio, vertical };
 }
 
-/** Probe an image's natural size to learn whether it is portrait. */
-function probeVertical(url: string, onResult: (vertical: boolean) => void) {
+/** Probe an image's natural aspect ratio (width / height). */
+function probeAspectRatio(url: string, onResult: (ratio: number) => void) {
   const img = new Image();
-  img.onload = () => onResult(img.naturalHeight / img.naturalWidth > 1.05);
-  img.onerror = () => onResult(false);
+  img.onload = () => onResult(img.naturalWidth / img.naturalHeight);
+  img.onerror = () => onResult(1);
   img.src = url;
 }
 
 /**
- * Instagram-story featured creators: a snap carousel where each card is
- * fronted by one of the creator's recent vertical (image/video) posts.
- * Tapping the media opens the full post; chevrons flip through the rest.
- * Only creators who actually have vertical media are shown; when none do,
- * the section falls back to the classic recent-creators avatar strip.
+ * The featured-creators tray: small avatars of everyone who published
+ * recently (gradient ring = has vertical stories), tap to open their latest
+ * post — plus the story carousel of vertical media beneath it.
  */
 export function FeaturedCreators({ profiles, notes }: { profiles: Profile[]; notes: FeedNote[] }) {
   const [fetchedMedia, setFetchedMedia] = useState<Map<string, CreatorMedia[]>>(new Map());
-  // Probed aspect results per media url (for assets without declared dims).
-  const [probed, setProbed] = useState<Map<string, boolean>>(new Map());
+  // Probed aspect ratios per media url (for assets without declared dims).
+  const [probed, setProbed] = useState<Map<string, number>>(new Map());
   const [openPost, setOpenPost] = useState<FeedNote | null>(null);
-  const creatorKey = profiles.map((profile) => profile.pubkey).join(",");
+  const creatorKey = profiles
+    .slice(0, FEATURED_LIMIT)
+    .map((p) => p.pubkey)
+    .join(",");
 
-  // Drag-to-slide with inertia: pointer dragging scrolls the row on
-  // mouse/trackpad (touch already has native scrolling), releases glide with
-  // momentum and settles onto the nearest card. A dragged pointer suppresses
-  // the tile click so dragging never opens a post.
-  const rowRef = useRef<HTMLDivElement>(null);
-  const drag = useRef({
-    down: false,
-    startX: 0,
-    scrollLeft: 0,
-    velocity: 0,
-    lastX: 0,
-    lastT: 0,
-  });
-  const suppressClick = useRef(false);
-  const rafRef = useRef(0);
-  const [dragging, setDragging] = useState(false);
-
-  const snapToNearest = () => {
-    const row = rowRef.current;
-    const first = row?.firstElementChild as HTMLElement | null;
-    if (!row || !first) return;
-    const pitch = first.offsetWidth + 12;
-    if (pitch <= 0) return;
-    const target = Math.max(
-      0,
-      Math.min(Math.round(row.scrollLeft / pitch) * pitch, row.scrollWidth - row.clientWidth),
-    );
-    row.scrollTo({ left: target, behavior: "smooth" });
-  };
-
-  const stopMomentum = () => cancelAnimationFrame(rafRef.current);
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (e.pointerType === "touch" || !rowRef.current) return;
-    stopMomentum();
-    drag.current = {
-      down: true,
-      startX: e.clientX,
-      scrollLeft: rowRef.current.scrollLeft,
-      velocity: 0,
-      lastX: e.clientX,
-      lastT: e.timeStamp,
-    };
-    setDragging(true);
-    // Track the drag on the window instead of capturing the pointer:
-    // setPointerCapture would retarget the tile's click event to the row.
-    window.addEventListener("pointermove", onWindowPointerMove);
-    window.addEventListener("pointerup", onWindowPointerUp);
-    window.addEventListener("pointercancel", onWindowPointerUp);
-  };
-
-  const onWindowPointerMove = (e: PointerEvent) => {
-    const state = drag.current;
-    if (!state.down || !rowRef.current) return;
-    const dx = e.clientX - state.startX;
-    if (Math.abs(dx) > 6) suppressClick.current = true;
-    const dt = Math.max(1, e.timeStamp - state.lastT);
-    // Pointer velocity (px/ms) — the scroll runs opposite to the drag.
-    state.velocity = (e.clientX - state.lastX) / dt;
-    state.lastX = e.clientX;
-    state.lastT = e.timeStamp;
-    rowRef.current.scrollLeft = state.scrollLeft - dx;
-  };
-
-  const onWindowPointerUp = () => {
-    window.removeEventListener("pointermove", onWindowPointerMove);
-    window.removeEventListener("pointerup", onWindowPointerUp);
-    window.removeEventListener("pointercancel", onWindowPointerUp);
-    endDrag();
-  };
-
-  const endDrag = () => {
-    if (!drag.current.down) return;
-    drag.current.down = false;
-    setDragging(false);
-    const row = rowRef.current;
-    if (!row) return;
-    // Glide with exponential decay, then settle on the nearest card.
-    let velocity = Math.max(-2.5, Math.min(2.5, -drag.current.velocity));
-    if (Math.abs(velocity) > 0.15) {
-      let last = performance.now();
-      const step = (now: number) => {
-        const dt = Math.min(48, now - last);
-        last = now;
-        if (!rowRef.current) return;
-        const before = rowRef.current.scrollLeft;
-        rowRef.current.scrollLeft = before - velocity * dt;
-        velocity = velocity * Math.exp(-dt / 220);
-        const hitEdge = rowRef.current.scrollLeft === before;
-        if (Math.abs(velocity) < 0.05 || hitEdge) {
-          snapToNearest();
-          return;
-        }
-        rafRef.current = requestAnimationFrame(step);
-      };
-      rafRef.current = requestAnimationFrame(step);
-    } else {
-      snapToNearest();
-    }
-    if (suppressClick.current) {
-      window.setTimeout(() => {
-        suppressClick.current = false;
-      }, 80);
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      stopMomentum();
-      window.removeEventListener("pointermove", onWindowPointerMove);
-      window.removeEventListener("pointerup", onWindowPointerUp);
-      window.removeEventListener("pointercancel", onWindowPointerUp);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // The story row reports its width so the card count can follow the space.
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const [rowWidth, setRowWidth] = useState(0);
+  const attachRow = useCallback((node: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    rowRef.current = node;
+    if (!node) return;
+    observerRef.current = new ResizeObserver((entries) => {
+      setRowWidth(entries[0].contentRect.width);
+    });
+    observerRef.current.observe(node);
   }, []);
 
   // Media already present in the current feed slice.
@@ -178,7 +87,7 @@ export function FeaturedCreators({ profiles, notes }: { profiles: Profile[]; not
     const media = toCreatorMedia(note);
     if (!media) continue;
     const list = feedMedia.get(note.author.pubkey) ?? [];
-    if (list.length >= 6) continue;
+    if (list.length >= STORIES_PER_CREATOR) continue;
     list.push(media);
     feedMedia.set(note.author.pubkey, list);
   }
@@ -190,7 +99,10 @@ export function FeaturedCreators({ profiles, notes }: { profiles: Profile[]; not
     if (!creatorKey) return;
     const pubkeys = creatorKey.split(",");
     let cancelled = false;
-    void queryEvents({ kinds: [1, 20, 21, 22], authors: pubkeys, limit: 150 }, { timeout: 6000 })
+    void queryEvents(
+      { kinds: [1, 20, 21, 22], authors: pubkeys, limit: MEDIA_FETCH_LIMIT },
+      { timeout: 6000 },
+    )
       .then((events) => {
         if (cancelled) return;
         const map = new Map<string, CreatorMedia[]>();
@@ -199,7 +111,7 @@ export function FeaturedCreators({ profiles, notes }: { profiles: Profile[]; not
           const media = toCreatorMedia(noteFromEvent(event));
           if (!media) continue;
           const list = map.get(event.pubkey) ?? [];
-          if (list.length >= 6) continue;
+          if (list.length >= STORIES_PER_CREATOR) continue;
           list.push(media);
           map.set(event.pubkey, list);
         }
@@ -213,23 +125,6 @@ export function FeaturedCreators({ profiles, notes }: { profiles: Profile[]; not
     };
   }, [creatorKey]);
 
-  // Probe undeclared image aspects so only truly vertical media is kept.
-  useEffect(() => {
-    for (const profile of profiles) {
-      for (const item of mediaOf(profile.pubkey)) {
-        const url = item.image ?? item.poster;
-        if (item.vertical !== undefined || !url || probed.has(url)) continue;
-        probeVertical(url, (result) => setProbed((prev) => new Map(prev).set(url, result)));
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [creatorKey, fetchedMedia, probed]);
-
-  if (profiles.length === 0) return null;
-
-  const isVertical = (item: CreatorMedia) =>
-    item.vertical ?? probed.get(item.image ?? item.poster ?? "") ?? false;
-
   // Merge: feed-slice media first, then the dedicated fetch, deduped by id.
   const mediaOf = (pubkey: string): CreatorMedia[] => {
     const merged: CreatorMedia[] = [];
@@ -239,21 +134,87 @@ export function FeaturedCreators({ profiles, notes }: { profiles: Profile[]; not
         if (seen.has(item.note.id)) continue;
         seen.add(item.note.id);
         merged.push(item);
-        if (merged.length >= 6) return merged;
+        if (merged.length >= STORIES_PER_CREATOR) return merged;
       }
     }
     return merged;
   };
 
-  // Only creators whose latest media is vertical make the story carousel.
-  // Each of their vertical posts becomes its own story card, so the whole
-  // carousel is one continuous run of featured creators' posts.
-  const stories = profiles
-    .map((profile) => ({ profile, media: mediaOf(profile.pubkey) }))
-    .map((entry) => ({ ...entry, media: entry.media.filter((item) => isVertical(item)) }))
-    .filter((entry) => entry.media.length > 0)
-    .flatMap(({ profile, media }) => media.map((item) => ({ profile, item, highlighted: false })));
-  if (stories.length > 0) stories[0].highlighted = true;
+  const isVertical = (item: CreatorMedia) =>
+    item.vertical ??
+    (() => {
+      const ratio = probed.get(item.image ?? item.poster ?? "");
+      return ratio === undefined ? false : ratio < 1.05;
+    })();
+
+  // Probe undeclared image aspect ratios so tiles can adapt to the media.
+  useEffect(() => {
+    for (const profile of profiles) {
+      for (const item of mediaOf(profile.pubkey)) {
+        const url = item.image ?? item.poster;
+        if (item.ratio !== undefined || !url || probed.has(url)) continue;
+        probeAspectRatio(url, (ratio) => setProbed((prev) => new Map(prev).set(url, ratio)));
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creatorKey, fetchedMedia, probed]);
+
+  if (profiles.length === 0) return null;
+
+  // Vertical-first, not vertical-only: portrait stories lead each creator's
+  // media, and their other image/video posts still become stories (cropped
+  // to the tile) so the carousel stays populated.
+  const storyCreators = profiles
+    .map((profile) => {
+      const media = mediaOf(profile.pubkey);
+      return {
+        profile,
+        media: [
+          ...media.filter((item) => isVertical(item)),
+          ...media.filter((item) => !isVertical(item)),
+        ],
+      };
+    })
+    .filter((entry) => entry.media.length > 0);
+  const allStories = storyCreators.flatMap(({ profile, media }) =>
+    media.map((item) => ({ profile, item })),
+  );
+
+  // Round-robin the stories so the visible cards are always from different
+  // creators first: everyone's latest story, then second stories, and so on —
+  // variety first, with deeper posts only filling leftover slots.
+  const diversified: typeof allStories = [];
+  for (let round = 0; ; round++) {
+    let added = false;
+    for (const { profile, media } of storyCreators) {
+      const story = media[round];
+      if (story) {
+        diversified.push({ profile, item: story });
+        added = true;
+      }
+    }
+    if (!added) break;
+  }
+
+  // Render exactly as many story cards as divide evenly into the row: no
+  // overflow, no ragged leftovers. The row reports its width and the count
+  // follows (nominal card pitch ~240px, floor 176px).
+  const fittedCount =
+    rowWidth > 0
+      ? Math.max(1, Math.min(allStories.length, Math.floor((rowWidth + 12) / 252)))
+      : Math.min(allStories.length, 3);
+  const visibleStories = diversified.slice(0, fittedCount);
+
+  // The tray: every featured creator with their latest post one tap away —
+  // gradient ring marks creators with stories, neutral ring = text posters.
+  const trayItems = profiles
+    .map((profile) => {
+      const stories = mediaOf(profile.pubkey).filter((item) => isVertical(item));
+      const latest =
+        stories[0]?.note ?? notes.find((note) => note.author.pubkey === profile.pubkey);
+      return { profile, hasStory: stories.length > 0, latest };
+    })
+    .filter((item) => item.latest);
 
   return (
     <section className="space-y-2.5">
@@ -261,33 +222,126 @@ export function FeaturedCreators({ profiles, notes }: { profiles: Profile[]; not
         <h2 className="text-[14px] font-semibold tracking-tight text-zinc-900">
           Featured creators
         </h2>
-        <span className="text-[11px] font-medium text-zinc-400">Stories</span>
-      </div>
-      <div
-        ref={rowRef}
-        onPointerDown={onPointerDown}
-        onClickCapture={(e) => {
-          if (suppressClick.current) {
-            e.preventDefault();
-            e.stopPropagation();
-          }
-        }}
-        className={`-mx-4 flex gap-3 overflow-x-auto px-4 pb-2 select-none active:cursor-grabbing sm:mx-0 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
-          dragging ? "cursor-grab" : "snap-x cursor-grab"
-        }`}
-      >
-        {stories.map(({ profile, item, highlighted }) => (
-          <StoryCard
-            key={item.note.id}
-            profile={profile}
-            media={item}
-            highlighted={highlighted}
-            onOpen={setOpenPost}
-          />
-        ))}
+        <span className="text-[11px] font-medium text-zinc-400">Recent posts</span>
       </div>
 
-      {/* The tapped story, opened as a full post. */}
+      {/* At-a-glance tray: who published recently, one tap to their post.
+          Items flex to fill the row edge-to-edge; scrolls only on overflow. */}
+      <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {trayItems.map(({ profile, hasStory, latest }) => {
+          const name = profile.displayName || profile.name || profile.handle;
+          return (
+            <button
+              key={profile.pubkey}
+              onClick={() => setOpenPost(latest)}
+              className="flex min-w-16 flex-1 flex-col items-center gap-1.5"
+              title={`Open ${name}'s latest post`}
+            >
+              <span
+                className={`rounded-full p-[2.5px] transition-transform hover:scale-105 ${
+                  hasStory
+                    ? "bg-gradient-to-tr from-amber-400 via-brand to-violet-500"
+                    : "bg-zinc-200"
+                }`}
+              >
+                {profile.picture ? (
+                  <img
+                    src={profile.picture}
+                    alt=""
+                    className="size-12 rounded-full object-cover ring-2 ring-white"
+                  />
+                ) : (
+                  <AvatarTile seed={name} size={48} />
+                )}
+              </span>
+              <span className="w-full truncate text-center text-[10.5px] font-medium text-zinc-600">
+                {name}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Story cards: vertical media first, one post per card — exactly as
+          many as divide evenly into the row width. */}
+      {visibleStories.length > 0 && (
+        <div ref={attachRow} className="-mx-4 flex gap-3 px-4 sm:mx-0 sm:px-0">
+          {visibleStories.map(({ profile, item }) => (
+            <div
+              key={item.note.id}
+              className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-card ring-1 ring-black/5 transition-shadow hover:shadow-elevated"
+            >
+              <Link
+                to="/profile"
+                search={{ pubkey: profile.pubkey }}
+                className="flex items-center gap-2.5 px-3 py-2.5"
+              >
+                {profile.picture ? (
+                  <img
+                    src={profile.picture}
+                    alt=""
+                    className="size-8 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <AvatarTile seed={profile.displayName || profile.handle} size={32} />
+                )}
+                <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-zinc-900">
+                  {profile.displayName || profile.name || profile.handle}
+                </span>
+              </Link>
+
+              <button
+                onClick={() => setOpenPost(item.note)}
+                className="relative block aspect-[4/5] w-full cursor-pointer bg-gradient-to-br from-zinc-800 via-zinc-900 to-black"
+                aria-label="Open post"
+              >
+                {item.video ? (
+                  <>
+                    {item.poster ? (
+                      <img
+                        src={item.poster}
+                        alt=""
+                        loading="lazy"
+                        draggable={false}
+                        className="absolute inset-0 size-full object-cover object-center"
+                      />
+                    ) : (
+                      <video
+                        src={item.video}
+                        autoPlay
+                        muted
+                        loop
+                        playsInline
+                        preload="metadata"
+                        ref={(el) => el?.setAttribute("referrerpolicy", "no-referrer")}
+                        onError={(e) => {
+                          // 403/expire on X-hosted clips: drop the dead
+                          // element so the gradient stage shows instead.
+                          e.currentTarget.style.display = "none";
+                        }}
+                        className="absolute inset-0 size-full object-cover object-center"
+                      />
+                    )}
+                    <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-zinc-900/60 px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-white backdrop-blur">
+                      <Play className="size-2.5 fill-white" /> Video
+                    </span>
+                  </>
+                ) : item.image ? (
+                  <img
+                    src={item.image}
+                    alt=""
+                    loading="lazy"
+                    draggable={false}
+                    className="absolute inset-0 size-full object-cover object-center"
+                  />
+                ) : null}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* The tapped post, opened as a full post. */}
       <Dialog open={!!openPost} onOpenChange={(o) => !o && setOpenPost(null)}>
         <DialogContent className="max-h-[92dvh] gap-0 overflow-y-auto p-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:max-w-[520px]">
           <button
@@ -301,85 +355,5 @@ export function FeaturedCreators({ profiles, notes }: { profiles: Profile[]; not
         </DialogContent>
       </Dialog>
     </section>
-  );
-}
-
-/** One story card: a single post by one featured creator. */
-function StoryCard({
-  profile,
-  media,
-  highlighted,
-  onOpen,
-}: {
-  profile: Profile;
-  media: CreatorMedia;
-  highlighted: boolean;
-  onOpen: (note: FeedNote) => void;
-}) {
-  const name = profile.displayName || profile.name || profile.handle;
-
-  return (
-    <div className="w-44 shrink-0 snap-start overflow-hidden rounded-2xl bg-white shadow-card ring-1 ring-black/5 transition-shadow hover:shadow-elevated sm:w-52">
-      <Link
-        to="/profile"
-        search={{ pubkey: profile.pubkey }}
-        className="flex items-center gap-2.5 px-3 py-2.5"
-      >
-        {profile.picture ? (
-          <img
-            src={profile.picture}
-            alt=""
-            className={`size-8 shrink-0 rounded-full object-cover ${
-              highlighted ? "ring-2 ring-brand ring-offset-2" : ""
-            }`}
-          />
-        ) : (
-          <AvatarTile seed={name} size={32} />
-        )}
-        <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-zinc-900">
-          {name}
-        </span>
-      </Link>
-
-      <div className="relative aspect-[4/5] w-full bg-zinc-900">
-        <button
-          onClick={() => onOpen(media.note)}
-          className="absolute inset-0 block size-full"
-          aria-label="Open post"
-        >
-          {media.video ? (
-            <>
-              {media.poster ? (
-                <img
-                  src={media.poster}
-                  alt=""
-                  loading="lazy"
-                  draggable={false}
-                  className="absolute inset-0 size-full object-contain object-center"
-                />
-              ) : (
-                <video
-                  src={media.video}
-                  muted
-                  preload="metadata"
-                  className="absolute inset-0 size-full object-contain object-center"
-                />
-              )}
-              <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-zinc-900/60 px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-white backdrop-blur">
-                <Play className="size-2.5 fill-white" /> Video
-              </span>
-            </>
-          ) : media.image ? (
-            <img
-              src={media.image}
-              alt=""
-              loading="lazy"
-              draggable={false}
-              className="absolute inset-0 size-full object-contain object-center transition-transform duration-300 hover:scale-[1.03]"
-            />
-          ) : null}
-        </button>
-      </div>
-    </div>
   );
 }
