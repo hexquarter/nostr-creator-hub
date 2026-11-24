@@ -36,6 +36,7 @@ import {
   type NoteLike,
 } from "@/lib/nostr/social";
 import { shortNpub } from "@/lib/nostr/profiles";
+import type { Nip68Media } from "@/lib/nostr/social";
 import {
   isBadgeActive,
   useCreatorBadges,
@@ -68,6 +69,12 @@ export type Post = {
   avatar?: string;
   image?: { gradient?: string; aspect?: string; url?: string };
   images?: string[];
+  /** Video URLs (kind-1 text links or NIP-68 video events). */
+  videos?: string[];
+  /** NIP-68 media with mime/dim/poster metadata (kinds 20/21/22). */
+  media?: Nip68Media[];
+  /** True for NIP-68 picture/video events: the media leads the card. */
+  visual?: boolean;
   sensitive?: { reason: string; note?: string };
   replies: number;
   reactions: number;
@@ -87,10 +94,13 @@ export function postFromNote(note: FeedNote): Post {
     handle: profile.handle,
     verified: Boolean(profile.nip05),
     time: timeAgo(note.createdAt),
-    content: contentWithoutImages(note.content, images),
+    content: contentWithoutImages(note.content, images, note.videos),
     avatar: profile.picture,
     images,
     image: images[0] ? { url: images[0] } : undefined,
+    videos: note.videos,
+    media: note.media,
+    visual: note.event.kind === 20 || note.event.kind === 21 || note.event.kind === 22,
     premium: note.premium,
     premiumSats: note.premiumSats,
     premiumUnlockSats: note.premiumUnlockSats,
@@ -110,7 +120,7 @@ export function postFromNote(note: FeedNote): Post {
   };
 }
 
-export function PostCard({ post }: { post: Post }) {
+export function PostCard({ post, flat = false }: { post: Post; flat?: boolean }) {
   const ui = useUI();
   const nostr = useNostr();
   const preferences = usePreferences();
@@ -376,102 +386,45 @@ export function PostCard({ post }: { post: Post }) {
     () => (plaintext ? extractMedia(plaintext) : { images: [], videos: [] }),
     [plaintext],
   );
-  const images = Array.from(new Set([...decryptedMedia.images, ...baseImages])).filter(
-    (url) => !failedImages.has(url),
+  // NIP-68 events carry canonical media metadata (mime, dimensions, poster).
+  const nip68Media = post.visual ? (post.media ?? []) : [];
+  const nip68Videos = nip68Media.filter(
+    (item) => item.mime?.startsWith("video/") || post.event?.kind !== 20,
   );
-  const videos = decryptedMedia.videos.filter((url) => !failedImages.has(url));
+  const videos = Array.from(
+    new Set([
+      ...(nip68Videos.length > 0 ? nip68Videos.map((item) => item.url) : (post.videos ?? [])),
+      ...decryptedMedia.videos,
+    ]),
+  ).filter((url) => !failedImages.has(url));
+  const images = Array.from(
+    new Set([
+      ...decryptedMedia.images,
+      ...baseImages,
+      ...(nip68Videos.length === 0
+        ? nip68Media.map((item) => item.url)
+        : nip68Media.filter((item) => item.mime?.startsWith("image/")).map((item) => item.url)),
+    ]),
+  ).filter((url) => !failedImages.has(url));
+  // A video poster (NIP-68 `thumb`) when the kind-1 text has none.
+  const videoPoster = nip68Videos.find((item) => item.poster)?.poster;
+  // The lead image's natural aspect ratio (NIP-68 `dim` when declared).
+  const nip68Ratio = (() => {
+    const dim = nip68Media.find((item) => item.url === images[0])?.dim;
+    const [, width, height] = dim ? (/(\d+)x(\d+)/.exec(dim) ?? []) : [];
+    if (!width || !height || Number(width) <= 0 || Number(height) <= 0) return undefined;
+    return `${width} / ${height}`;
+  })();
+  const mediaLed = (post.visual || images.length > 0 || videos.length > 0) && !locked;
+  // Flat mode (modals): no negative margins — the card itself has no padding,
+  // so media spans edge-to-edge and each section carries its own padding.
+  const bleed = flat ? "rounded-none" : mediaLed ? "-mx-5 rounded-none sm:-mx-6" : "rounded-xl";
+  const sectionPad = flat ? "px-5" : "";
 
-  return (
-    <article className="min-w-0 space-y-4 overflow-hidden rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 transition-shadow hover:shadow-elevated sm:p-6">
-      <header className="flex items-start justify-between gap-2">
-        <Link
-          to="/profile"
-          search={{ pubkey: post.authorPubkey }}
-          className="group flex min-w-0 items-center gap-3"
-        >
-          {post.avatar ? (
-            <img
-              src={post.avatar}
-              alt=""
-              className="size-10 shrink-0 rounded-full object-cover ring-1 ring-black/5"
-            />
-          ) : (
-            <AvatarTile seed={post.author} size={40} />
-          )}
-          <div className="min-w-0">
-            <h4 className="flex min-w-0 items-center gap-1.5 text-[13.5px] font-semibold text-zinc-900">
-              <span className="truncate group-hover:underline">{post.author}</span>
-              {post.verified && <BadgeCheck className="size-3.5 shrink-0 fill-brand text-white" />}
-              {post.premium && (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700">
-                  {locked ? <Lock className="size-2.5" /> : <Crown className="size-2.5" />}
-                  {locked ? "Members" : "Premium"}
-                </span>
-              )}
-            </h4>
-            <p className="truncate text-[11.5px] text-zinc-400">
-              {post.handle} · {post.time}
-            </p>
-          </div>
-        </Link>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              aria-label="More"
-              className="grid size-8 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            {locked && (
-              <DropdownMenuItem
-                onClick={() =>
-                  ui.openBadge({
-                    creator: post.authorPubkey,
-                    name: post.author,
-                    sats: badgeSats,
-                    postId: post.id,
-                    postSats: unlockSats,
-                    mode: "post",
-                  })
-                }
-              >
-                <Crown className="size-4 text-amber-600" /> Unlock this post
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem onClick={() => void toggleFollow()}>
-              <UserPlus className="size-4" /> {following ? "Unfollow" : "Follow"} {post.handle}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => ui.openShare({ title: post.content.slice(0, 60), url: shareUrl })}
-            >
-              <LinkIcon className="size-4" /> Copy link
-            </DropdownMenuItem>
-            {!locked && !encrypted && (
-              <DropdownMenuItem
-                onClick={() => {
-                  void navigator.clipboard.writeText(post.content);
-                  toast.success("Post copied");
-                }}
-              >
-                <Copy className="size-4" /> Copy text
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => toast("Hidden from your feed")}>
-              <EyeOff className="size-4" /> Not interested
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-rose-600"
-              onClick={() => toast("Reported to your relays")}
-            >
-              <Flag className="size-4" /> Report
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </header>
-
+  // Instagram-style layout: visual posts show the media first, caption below;
+  // text-only posts keep the classic note-first layout.
+  const bodyBlock = (
+    <>
       {locked ? (
         <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-amber-50 via-white to-orange-50 ring-1 ring-amber-100">
           <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -571,7 +524,11 @@ export function PostCard({ post }: { post: Post }) {
       ) : (
         <PostContent content={plaintext ?? post.content} />
       )}
+    </>
+  );
 
+  const mediaBlock = (
+    <>
       {locked && images.length > 0 && (
         <div className="flex items-center gap-2 rounded-xl bg-zinc-50 px-4 py-3 ring-1 ring-zinc-100">
           <Lock className="size-3.5 shrink-0 text-zinc-400" />
@@ -582,7 +539,11 @@ export function PostCard({ post }: { post: Post }) {
       )}
 
       {!locked && images.length > 0 && (
-        <div className="relative aspect-[16/10] w-full overflow-hidden rounded-xl bg-zinc-100 ring-1 ring-black/5">
+        <div
+          className={`relative w-full overflow-hidden bg-zinc-100 ${bleed} ${
+            images.length > 1 ? "aspect-square" : ""
+          }`}
+        >
           {post.sensitive && !revealed ? (
             <>
               <div className="absolute inset-0 scale-110 bg-zinc-200 blur-2xl" />
@@ -603,10 +564,22 @@ export function PostCard({ post }: { post: Post }) {
                 </div>
               </div>
             </>
-          ) : (
+          ) : images.length > 1 ? (
             <MediaGrid
               images={images}
               onFailed={(url) => setFailedImages((prev) => new Set(prev).add(url))}
+            />
+          ) : (
+            /* Single image: natural aspect ratio — NIP-68 `dim` when declared,
+               otherwise the browser's natural size — capped at the viewport
+               height, never squeezed into a forced crop box. */
+            <img
+              src={images[0]}
+              alt=""
+              draggable={false}
+              onError={() => setFailedImages((prev) => new Set(prev).add(images[0]))}
+              className="block w-full object-cover object-center max-h-[85vh]"
+              style={nip68Ratio ? { aspectRatio: nip68Ratio, maxHeight: "85vh" } : undefined}
             />
           )}
           {post.sensitive && revealed && (
@@ -622,15 +595,35 @@ export function PostCard({ post }: { post: Post }) {
       )}
 
       {!locked && videos.length > 0 && (!post.sensitive || revealed) && (
-        <div className="space-y-2">
-          {videos.map((url) => (
-            <div
-              key={url}
-              className="relative overflow-hidden rounded-xl bg-zinc-900 ring-1 ring-black/5"
-            >
-              <video src={url} controls preload="metadata" className="w-full" />
-            </div>
-          ))}
+        <div className="space-y-0.5">
+          {videos.map((url) => {
+            const dim = nip68Media.find((item) => item.url === url)?.dim;
+            const [, width, height] = dim ? (/(\d+)x(\d+)/.exec(dim) ?? []) : [];
+            const known = Boolean(width && height);
+            return (
+              <div
+                key={url}
+                className={`relative flex items-center justify-center overflow-hidden bg-zinc-900 ${bleed}`}
+                style={
+                  known
+                    ? { aspectRatio: `${width} / ${height}`, maxHeight: "85vh" }
+                    : { aspectRatio: "16 / 9" }
+                }
+              >
+                <video
+                  src={url}
+                  poster={videoPoster}
+                  controls
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                  className={`size-full ${known ? "object-contain" : "object-cover"}`}
+                />
+              </div>
+            );
+          })}
         </div>
       )}
       {!locked && videos.length > 0 && post.sensitive && !revealed && (
@@ -648,14 +641,121 @@ export function PostCard({ post }: { post: Post }) {
         </div>
       )}
 
-      {images.length === 0 && post.image?.gradient && (
+      {images.length === 0 && videos.length === 0 && post.image?.gradient && (
         <div
-          className={`w-full overflow-hidden rounded-xl ring-1 ring-black/5 ${post.image.aspect ?? "aspect-[16/10]"}`}
+          className={`w-full overflow-hidden ring-1 ring-black/5 ${bleed} ${post.image.aspect ?? "aspect-[16/10]"}`}
           style={{ background: post.image.gradient }}
         />
       )}
+    </>
+  );
 
-      <footer className="flex items-center gap-1 pt-1 text-zinc-500">
+  return (
+    <article
+      className={`min-w-0 space-y-4 overflow-hidden bg-white ${
+        flat
+          ? ""
+          : "rounded-2xl p-5 shadow-card ring-1 ring-black/5 transition-shadow hover:shadow-elevated sm:p-6"
+      }`}
+    >
+      <header
+        className={`flex items-start justify-between gap-2 ${sectionPad} ${flat ? "pt-4" : ""}`}
+      >
+        <Link
+          to="/profile"
+          search={{ pubkey: post.authorPubkey }}
+          className="group flex min-w-0 items-center gap-3"
+        >
+          {post.avatar ? (
+            <img
+              src={post.avatar}
+              alt=""
+              className="size-10 shrink-0 rounded-full object-cover ring-1 ring-black/5"
+            />
+          ) : (
+            <AvatarTile seed={post.author} size={40} />
+          )}
+          <div className="min-w-0">
+            <h4 className="flex min-w-0 items-center gap-1.5 text-[13.5px] font-semibold text-zinc-900">
+              <span className="truncate group-hover:underline">{post.author}</span>
+              {post.verified && <BadgeCheck className="size-3.5 shrink-0 fill-brand text-white" />}
+              {post.premium && (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700">
+                  {locked ? <Lock className="size-2.5" /> : <Crown className="size-2.5" />}
+                  {locked ? "Members" : "Premium"}
+                </span>
+              )}
+            </h4>
+            <p className="truncate text-[11.5px] text-zinc-400">
+              {post.handle} · {post.time}
+            </p>
+          </div>
+        </Link>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              aria-label="More"
+              className="grid size-8 place-items-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+            >
+              <MoreHorizontal className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            {locked && (
+              <DropdownMenuItem
+                onClick={() =>
+                  ui.openBadge({
+                    creator: post.authorPubkey,
+                    name: post.author,
+                    sats: badgeSats,
+                    postId: post.id,
+                    postSats: unlockSats,
+                    mode: "post",
+                  })
+                }
+              >
+                <Crown className="size-4 text-amber-600" /> Unlock this post
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => void toggleFollow()}>
+              <UserPlus className="size-4" /> {following ? "Unfollow" : "Follow"} {post.handle}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => ui.openShare({ title: post.content.slice(0, 60), url: shareUrl })}
+            >
+              <LinkIcon className="size-4" /> Copy link
+            </DropdownMenuItem>
+            {!locked && !encrypted && (
+              <DropdownMenuItem
+                onClick={() => {
+                  void navigator.clipboard.writeText(post.content);
+                  toast.success("Post copied");
+                }}
+              >
+                <Copy className="size-4" /> Copy text
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => toast("Hidden from your feed")}>
+              <EyeOff className="size-4" /> Not interested
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-rose-600"
+              onClick={() => toast("Reported to your relays")}
+            >
+              <Flag className="size-4" /> Report
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </header>
+
+      {!mediaLed && <div className={sectionPad}>{bodyBlock}</div>}
+      {mediaBlock}
+      {mediaLed && <div className={`pt-3 ${sectionPad}`}>{bodyBlock}</div>}
+
+      <footer
+        className={`flex items-center gap-2 pt-2 text-zinc-500 ${sectionPad} ${flat ? "pb-2" : ""}`}
+      >
         <Action
           icon={MessageCircle}
           label={String(post.replies)}
@@ -711,7 +811,9 @@ export function PostCard({ post }: { post: Post }) {
       </footer>
 
       {showThread && (
-        <section className="space-y-3 border-t border-zinc-100 pt-4">
+        <section
+          className={`space-y-3 border-t border-zinc-100 pt-4 ${sectionPad} ${flat ? "pb-2" : ""}`}
+        >
           <div className="flex items-center justify-between gap-2">
             <p className="text-[12px] font-semibold text-zinc-800">
               Replies{post.replies ? ` · ${post.replies}` : ""}

@@ -35,6 +35,7 @@ import {
   bookmarkIds,
   fetchBookmarkList,
   publishNote,
+  publishPicture as publishPictureEvent,
   publishReaction,
   publishRepost,
   toggleBookmark as toggleBookmarkEvent,
@@ -125,6 +126,11 @@ type NostrContextValue = {
   updateProfile: (patch: Partial<Profile>) => Promise<void>;
 
   publish: (input: PublishNoteInput) => Promise<NostrEvent>;
+  /** Publish a NIP-68 picture/video event (kinds 20/21/22). */
+  publishPicture: (input: {
+    caption?: string;
+    media: { url: string; mime: string; dim?: string; poster?: string }[];
+  }) => Promise<NostrEvent>;
   /** Sign and publish any event template (profile, badge proof, …). */
   signAndPublish: (template: EventTemplate) => Promise<NostrEvent>;
   /** Sign any event template with the account's key, without publishing
@@ -571,6 +577,14 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     [requireSigner],
   );
 
+  const publishPicture = useCallback(
+    async (input: {
+      caption?: string;
+      media: { url: string; mime: string; dim?: string; poster?: string }[];
+    }) => publishPictureEvent(requireSigner(), input),
+    [requireSigner],
+  );
+
   const signAndPublish = useCallback(
     async (template: EventTemplate) => {
       const event = await requireSigner().signEvent(template);
@@ -846,6 +860,7 @@ export function NostrProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       updateProfile,
       publish,
+      publishPicture,
       signAndPublish,
       signTemplate,
       uploadMedia,
@@ -885,6 +900,7 @@ export function NostrProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       updateProfile,
       publish,
+      publishPicture,
       signAndPublish,
       signTemplate,
       uploadMedia,

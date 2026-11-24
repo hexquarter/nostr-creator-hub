@@ -35,11 +35,7 @@ export const Route = createFileRoute("/")({
   component: Home,
 });
 
-type Tab = "for-you" | "following";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "following", label: "Following" },
-  { id: "for-you", label: "For you" },
-];
+type Tab = "following";
 
 function Home() {
   const nostr = useNostr();
@@ -57,17 +53,28 @@ function Home() {
       setLoading(true);
       setError("");
       try {
-        const authors =
-          tab === "following" && nostr.following.length > 0 ? nostr.following : undefined;
-        const result = await fetchFeed({ limit: 40, authors, timeout: 6000 });
-        if (signal?.cancelled) return;
-        if (authors && result.length === 0) {
-          const fallback = await fetchFeed({ limit: 30, timeout: 6000 });
-          if (signal?.cancelled) return;
-          setNotes(fallback);
-        } else {
-          setNotes(result);
+        // The following feed must only ever contain followed authors: when the
+        // follow list is empty or quiet we show the empty state instead of
+        // substituting random global content. The author filter is capped —
+        // relays refuse very large author lists outright.
+        if (tab === "following" && nostr.following.length === 0) {
+          setNotes([]);
+          return;
         }
+        const authors =
+          tab === "following" && nostr.following.length > 0
+            ? nostr.following.slice(0, 100)
+            : undefined;
+        const result = await fetchFeed({ limit: 40, authors, timeout: 9000 });
+        // Picture-first feed: NIP-68 media and posts carrying images/videos
+        // lead, pure-text notes follow — each group newest first.
+        const visualFirst = (list: FeedNote[]) => {
+          const isVisual = (note: FeedNote) =>
+            note.images.length > 0 || note.videos.length > 0 || note.media.length > 0;
+          return [...list.filter(isVisual), ...list.filter((note) => !isVisual(note))];
+        };
+        if (signal?.cancelled) return;
+        setNotes(visualFirst(result));
       } catch (err) {
         if (!signal?.cancelled) {
           setError(err instanceof Error ? err.message : "Relays are taking a moment.");
@@ -129,35 +136,12 @@ function Home() {
               <p className="mt-1.5 text-[13px] text-zinc-500">
                 {signedOut
                   ? "Discover creators and live posts from across Nostr."
-                  : tab === "following"
-                    ? "Only posts from the creators you follow — no algorithm in the way."
-                    : "Live from the Nostr relays, as it happens."}
+                  : "Only posts from the creators you follow — no algorithm in the way."}
               </p>
             </div>
-            {!signedOut && (
-              <div className="hidden items-center gap-1 rounded-full bg-white p-1 text-[12px] font-medium shadow-card ring-1 ring-black/5 sm:flex">
-                {TABS.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => {
-                      if (t.id === "following" && !nostr.account) {
-                        ui.openAuth({ intent: "see the creators you follow" });
-                        return;
-                      }
-                      setTab(t.id);
-                    }}
-                    className={`rounded-full px-3 py-1 transition-colors ${
-                      tab === t.id ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-zinc-900"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            )}
           </header>
 
-          <FeaturedCreators profiles={creators} />
+          <FeaturedCreators profiles={creators} notes={notes} />
 
           {!signedOut && (
             <div className="hidden lg:block">
@@ -187,16 +171,20 @@ function Home() {
             />
           ) : notes.length === 0 ? (
             <EmptyState
-              title={tab === "following" ? "Your following feed is quiet" : "No notes yet"}
+              title={
+                tab === "following" && nostr.account
+                  ? "Your following feed is quiet"
+                  : "No notes yet"
+              }
               body={
-                tab === "following"
-                  ? "Follow a few creators and their posts will show up here. We're showing the global feed in the meantime."
+                tab === "following" && nostr.account
+                  ? "Follow a few creators and their posts will show up here, newest first."
                   : "Be the first to post something on this relay set."
               }
-              actionLabel={tab === "following" ? "Discover creators" : "Write a post"}
+              actionLabel="Discover creators"
               onAction={() => {
-                if (tab === "following") setTab("for-you");
-                else ui.openCompose({ mode: "post" });
+                invalidateQueries();
+                void load();
               }}
             />
           ) : (

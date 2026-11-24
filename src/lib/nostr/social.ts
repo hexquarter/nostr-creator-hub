@@ -27,6 +27,13 @@ export type FeedNote = {
   content: string;
   createdAt: number;
   images: string[];
+  /** Video URLs found in the note text (kind 1) or NIP-68 tags (20/21/22). */
+  videos: string[];
+  /**
+   * NIP-68 media (kinds 20/21/22): the canonical visual posts of the feed,
+   * each with its url, mime type, declared dimensions and video poster.
+   */
+  media: Nip68Media[];
   contentWarning?: string;
   /** Members-only post: readable with the creator's badge. */
   premium?: boolean;
@@ -39,6 +46,18 @@ export type FeedNote = {
   isReply: boolean;
   counts: NoteCounts;
   referencedEventId?: string;
+};
+
+/** One media asset of a NIP-68 picture/video event. */
+export type Nip68Media = {
+  url: string;
+  mime?: string;
+  /** Declared pixel dimensions, e.g. "1080x1350". */
+  dim?: string;
+  /** Poster/thumbnail for videos (NIP-68 `thumb`/`image` tag). */
+  poster?: string;
+  /** NIP-68 audio permission tag (`public` when the clip has sound). */
+  audio?: boolean;
 };
 
 const EMPTY_COUNTS: NoteCounts = { replies: 0, reposts: 0, reactions: 0, zaps: 0, zapSats: 0 };
@@ -164,15 +183,20 @@ export function parseImages(event: NostrEvent): string[] {
 }
 
 /**
- * Remove media URLs from note text so feed cards show an image instead of a
- * bare link. Non-image links are kept so they can render as clickable anchors.
+ * Remove media URLs from note text so feed cards show an image/video instead
+ * of a bare link. Non-media links are kept so they can render as clickable
+ * anchors.
  */
-export function contentWithoutImages(content: string, images: string[] = []): string {
-  const rendered = new Set(images);
+export function contentWithoutImages(
+  content: string,
+  images: string[] = [],
+  videos: string[] = [],
+): string {
+  const rendered = new Set([...images, ...videos]);
   return content
     .replace(URL_RE, (match) => {
       const url = trimUrl(match);
-      if (rendered.has(url) || looksLikeImage(url)) return "";
+      if (rendered.has(url) || looksLikeImage(url) || looksLikeVideo(url)) return "";
       return match;
     })
     .replace(/[ \t]+\n/g, "\n")
@@ -185,6 +209,78 @@ export function noteIsReply(event: NostrEvent) {
   return event.tags.some((t) => t[0] === "e");
 }
 
+/** NIP-68 picture (20), vertical video (21) and horizontal video (22) kinds. */
+export const PICTURE_KINDS = [20, 21, 22];
+
+function isNip68Kind(kind: number) {
+  return kind === 20 || kind === 21 || kind === 22;
+}
+
+/**
+ * Parse NIP-68 media tags: each asset contributes `url`, `m` (mime), `dim`
+ * (dimensions) and — for videos — `thumb`/`image` poster plus `aud` (sound).
+ */
+function parseNip68Media(event: NostrEvent): Nip68Media[] {
+  const media: Nip68Media[] = [];
+  let current: Partial<Nip68Media> | null = null;
+  const flush = () => {
+    if (current?.url && /^https?:\/\//i.test(current.url)) {
+      media.push({
+        url: current.url,
+        mime: current.mime,
+        dim: current.dim,
+        poster: current.poster,
+        audio: current.audio,
+      });
+    }
+    current = null;
+  };
+  for (const tag of event.tags) {
+    if (tag[0] === "url") {
+      flush();
+      current = { url: tag[1] ?? "" };
+      continue;
+    }
+    if (!current) continue;
+    if (tag[0] === "m") current.mime = tag[1];
+    else if (tag[0] === "dim") current.dim = tag[1];
+    else if ((tag[0] === "thumb" || tag[0] === "image") && !current.poster) {
+      current.poster = tag[1];
+    } else if (tag[0] === "aud") current.audio = tag[1] !== "none";
+  }
+  flush();
+  return media;
+}
+
+/** Video URLs referenced in plain note text (kind 1 posts). */
+function parseVideos(event: NostrEvent): string[] {
+  const urls: string[] = [];
+  for (const tag of event.tags) {
+    if (tag[0] === "imeta") {
+      const url = tag
+        .slice(1)
+        .find((part) => part.startsWith("url "))
+        ?.slice(4)
+        .trim();
+      const mime = tag
+        .slice(1)
+        .find((part) => part.startsWith("m "))
+        ?.slice(2)
+        .trim();
+      if (url && mime?.startsWith("video/")) urls.push(url);
+    }
+    if (tag[0] === "video" && tag[1]) urls.push(tag[1]);
+  }
+  for (const match of event.content.match(URL_RE) ?? []) {
+    const url = trimUrl(match);
+    if (looksLikeVideo(url)) urls.push(url);
+  }
+  const unique = Array.from(new Set(urls)).filter(
+    (url) => /^https?:\/\//i.test(url) && !looksLikeImage(url),
+  );
+  return unique.slice(0, 4);
+}
+
 export function noteFromEvent(event: NostrEvent, author?: Profile): FeedNote {
   const warning = firstTag(event, "content-warning");
   const premiumTag = firstTag(event, "premium");
@@ -192,13 +288,25 @@ export function noteFromEvent(event: NostrEvent, author?: Profile): FeedNote {
   const unlockTag = firstTag(event, "premium-unlock");
   const premiumUnlockSats = unlockTag ? Number.parseInt(unlockTag, 10) : Number.NaN;
   const encrypted = event.tags.some((t) => t[0] === "encrypted" && t[1] === EXCLUSIVE_SCHEME);
+  const nip68 = isNip68Kind(event.kind);
+  const media = nip68 ? parseNip68Media(event) : [];
   return {
     event,
     id: event.id,
     author: author ?? emptyProfile(event.pubkey),
     content: event.content,
     createdAt: event.created_at,
-    images: parseImages(event),
+    images: nip68
+      ? media
+          .filter((m) => (event.kind === 20 ? true : (m.mime?.startsWith("image/") ?? false)))
+          .map((m) => m.url)
+      : parseImages(event),
+    videos: nip68
+      ? media
+          .filter((m) => (event.kind === 20 ? (m.mime?.startsWith("video/") ?? false) : true))
+          .map((m) => m.url)
+      : parseVideos(event),
+    media,
     contentWarning: warning || undefined,
     premium: premiumTag !== undefined,
     encrypted,
@@ -274,7 +382,8 @@ export type FeedOptions = {
 /** Fetch notes, their authors, and engagement counts in one pass. */
 export async function fetchFeed(options: FeedOptions = {}): Promise<FeedNote[]> {
   const limit = options.limit ?? 30;
-  const filter: Filter = { kinds: [1], limit: Math.min(limit * 2, 200) };
+  // NIP-68 picture and video events sit alongside kind-1 notes in the feed.
+  const filter: Filter = { kinds: [1, ...PICTURE_KINDS], limit: Math.min(limit * 2, 200) };
   if (options.authors?.length) filter.authors = options.authors;
   if (options.ids?.length) filter.ids = options.ids;
   if (options.search) filter.search = options.search;
@@ -449,6 +558,55 @@ export async function publishNote(signer: AppSigner, input: PublishNoteInput): P
     tags,
   };
   const signedEvent = await signer.signEvent(template);
+  await publishEvent(signedEvent);
+  return signedEvent;
+}
+
+export type PublishPictureInput = {
+  /** Caption — NIP-68 keeps the text in `content`. */
+  caption?: string;
+  /** Uploaded media with their mime types and optional dimensions/poster. */
+  media: { url: string; mime: string; dim?: string; poster?: string }[];
+  contentWarning?: string;
+};
+
+/**
+ * Publish a NIP-68 picture/video event: kind 20 for pictures, kind 21 for a
+ * vertical video and kind 22 for a horizontal one (orientation from `dim`).
+ * This is the canonical visual-post format the Instagram-style feed renders.
+ */
+export async function publishPicture(
+  signer: AppSigner,
+  input: PublishPictureInput,
+): Promise<NostrEvent> {
+  const media = input.media.filter((item) => /^https?:\/\//i.test(item.url));
+  if (media.length === 0) throw new Error("Add at least one image or video first.");
+
+  const hasVideo = media.some((item) => item.mime.startsWith("video/"));
+  let kind = 20;
+  if (hasVideo) {
+    const firstVideo = media.find((item) => item.mime.startsWith("video/"))!;
+    const [, width, height] = /(\d+)x(\d+)/.exec(firstVideo.dim ?? "") ?? [];
+    kind = width && height && Number(height) > Number(width) ? 21 : 22;
+  }
+
+  const tags: string[][] = [];
+  if (input.contentWarning) tags.push(["content-warning", input.contentWarning]);
+  for (const item of media) {
+    tags.push(["url", item.url], ["m", item.mime]);
+    if (item.dim) tags.push(["dim", item.dim]);
+    if (item.mime.startsWith("video/")) {
+      if (item.poster) tags.push(["thumb", item.poster], ["image", item.poster]);
+      tags.push(["aud", "public"]);
+    }
+  }
+
+  const signedEvent = await signer.signEvent({
+    kind,
+    created_at: Math.floor(Date.now() / 1000),
+    content: input.caption ?? "",
+    tags,
+  });
   await publishEvent(signedEvent);
   return signedEvent;
 }
