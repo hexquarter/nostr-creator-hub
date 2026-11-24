@@ -2470,9 +2470,7 @@ function PremiumComposerModal({ open, onClose }: { open: boolean; onClose: () =>
 
   const tierClasses = (active: boolean) =>
     `rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors ${
-      active
-        ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200"
-        : "text-gray-400"
+      active ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200" : "text-gray-400"
     }`;
 
   return (

@@ -243,7 +243,16 @@ function WalletPage() {
         <StatCard
           label="BTC / USD"
           value={price ? formatUsd(price.usd, 0) : "—"}
-          sub={price ? (<span className="text-xs text-zinc-500">Price by <a href="https://pricestr.xyz" target="_blank" className="underline">pricestr.xyz</a></span>) : undefined}
+          sub={
+            price ? (
+              <span className="text-xs text-zinc-500">
+                Price by{" "}
+                <a href="https://pricestr.xyz" target="_blank" className="underline">
+                  pricestr.xyz
+                </a>
+              </span>
+            ) : undefined
+          }
         />
       </section>
 
@@ -401,7 +410,15 @@ function Action({
   );
 }
 
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string | JSX.Element }) {
+function StatCard({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  sub?: string | JSX.Element;
+}) {
   return (
     <div className="rounded-2xl bg-white p-4 shadow-card ring-1 ring-black/5">
       <p className="text-[10.5px] font-semibold uppercase tracking-wider text-zinc-400">{label}</p>
