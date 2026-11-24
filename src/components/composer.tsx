@@ -4,11 +4,15 @@ import { toast } from "sonner";
 import { AvatarTile } from "./avatar-tile";
 import { useUI } from "./modals/ui-provider";
 import { useNostr } from "./nostr-provider";
+import { isCreatorPassActive, useCreatorPass } from "@/lib/nostr/creator-pass";
 
 export function Composer() {
   const ui = useUI();
   const nostr = useNostr();
   const account = nostr.account;
+  // The chip reflects the Crays premium activation: with premium, posting
+  // goes straight to the editor; without it, the membership popup opens.
+  const premiumActive = isCreatorPassActive(useCreatorPass());
   const [text, setText] = useState("");
   const [images, setImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -118,7 +122,6 @@ export function Composer() {
                 label="Article"
                 onClick={() => ui.openCompose({ mode: "article" })}
               />
-              <ComposerIcon icon={Zap} label="Lightning invoice" onClick={() => ui.openReceive()} />
               <input
                 ref={fileRef}
                 type="file"
@@ -133,19 +136,24 @@ export function Composer() {
             </div>
             <div className="flex items-center gap-1.5">
               <button
-                onClick={ui.openUpgrade}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12.5px] font-medium text-amber-700 transition-colors hover:bg-amber-50"
-              >
-                <Crown className="size-3.5" />
-                Tools
-              </button>
-              <button
                 onClick={() => void handlePost()}
                 disabled={posting || uploading}
                 className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-[12.5px] font-semibold text-white shadow-brand ring-1 ring-brand/80 transition-all hover:bg-brand/90 hover:shadow-elevated active:scale-[0.98] disabled:opacity-60"
               >
                 {posting && <Loader2 className="size-3.5 animate-spin" />}
                 Post
+              </button>
+              <button
+                onClick={() => (premiumActive ? ui.openPremiumPost() : ui.openUpgrade())}
+                title={
+                  premiumActive
+                    ? "Premium Posting — publish members-only content"
+                    : "Activate Crays premium"
+                }
+                className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-amber-300 to-yellow-500 px-3.5 py-2 text-[12.5px] font-bold text-zinc-950 shadow-sm shadow-amber-500/25 transition-all hover:brightness-105 active:scale-[0.98]"
+              >
+                <Crown className="size-3.5" />
+                Premium Posting
               </button>
             </div>
           </div>

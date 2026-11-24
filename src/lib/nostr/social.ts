@@ -73,6 +73,38 @@ function looksLikeImage(url: string) {
   }
 }
 
+const VIDEO_EXT = /\.(mp4|webm|mov|m4v|mkv)(\?|#|$)/i;
+
+function looksLikeVideo(url: string) {
+  if (VIDEO_EXT.test(url)) return true;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host.includes("blossom") && !looksLikeImage(url);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Media embedded in a note's *text* — used for decrypted members-only posts,
+ * where the media URLs live inside the ciphertext and only become visible
+ * once the reader unlocks the content.
+ */
+export function extractMedia(content: string): { images: string[]; videos: string[] } {
+  const images: string[] = [];
+  const videos: string[] = [];
+  for (const match of content.match(URL_RE) ?? []) {
+    const url = trimUrl(match);
+    if (!/^https?:\/\//i.test(url)) continue;
+    if (looksLikeVideo(url)) videos.push(url);
+    else if (looksLikeImage(url)) images.push(url);
+  }
+  return {
+    images: Array.from(new Set(images)).slice(0, 8),
+    videos: Array.from(new Set(videos)).slice(0, 4),
+  };
+}
+
 function trimUrl(url: string) {
   return url.replace(/[),.!?]+$/, "");
 }

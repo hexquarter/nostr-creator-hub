@@ -181,6 +181,8 @@ type ShareOptions = { url?: string; title?: string };
 type CardPhase = "idle" | "preparing" | MoonPayProgress | "ready" | "done" | "error";
 type ComposeOptions = {
   mode?: "post" | "article" | "poll" | "reply";
+  /** Start the composer with members-only already activated (premium chip). */
+  premium?: boolean;
   replyTo?: string;
   replyToEvent?: NostrEvent;
 };
@@ -253,6 +255,8 @@ type UICtx = {
 
   openZap: (o?: ZapOptions) => void;
   openCompose: (o?: ComposeOptions) => void;
+  /** The premium-tailored members-only composer. */
+  openPremiumPost: () => void;
   openBadge: (o?: BadgeOptions) => void;
   openShare: (o?: ShareOptions) => void;
   openUpgrade: () => void;
@@ -286,6 +290,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
 
   const [zap, setZap] = useState<ZapOptions | null>(null);
   const [compose, setCompose] = useState<ComposeOptions | null>(null);
+  const [premiumPost, setPremiumPost] = useState(false);
   const [badge, setBadge] = useState<BadgeOptions | null>(null);
   const [share, setShare] = useState<ShareOptions | null>(null);
   const [upgrade, setUpgrade] = useState(false);
@@ -414,6 +419,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
 
       openZap: (o) => gate("send a zap", () => setZap(o ?? {})),
       openCompose: (o) => gate("post to Nostr", () => setCompose(o ?? { mode: "post" })),
+      openPremiumPost: () => gate("publish premium content", () => setPremiumPost(true)),
       openBadge: (o) => gate("get a creator badge", () => setBadge(o ?? {})),
       openShare: (o) => setShare(o ?? {}),
       openUpgrade: () => gate("become a Creator", () => setUpgrade(true)),
@@ -455,6 +461,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
         onClose={() => setCompose(null)}
         options={compose ?? { mode: "post" }}
       />
+      <PremiumComposerModal open={premiumPost} onClose={() => setPremiumPost(false)} />
       <BadgeModal open={!!badge} onClose={() => setBadge(null)} options={badge ?? {}} />
       <ShareModal open={!!share} onClose={() => setShare(null)} options={share ?? {}} />
       <UpgradeModal open={upgrade} onClose={() => setUpgrade(false)} />
@@ -882,7 +889,9 @@ function ComposeModal({
       setTitle("");
       setText("");
       setPollOptions(["", "", ""]);
-      setPremium(false);
+      // Opened from the premium chip: members-only starts activated, with the
+      // pricing content visible right away — no extra popup or toggling.
+      setPremium(options.premium === true && canPublishPremium);
       setPrice(500);
       setUnlockPrice(200);
       setSensitive(false);
@@ -901,7 +910,7 @@ function ComposeModal({
           .catch(() => undefined);
       }
     }
-  }, [open, options.mode, canPublishPremium, ownerPubkey]);
+  }, [open, options.mode, options.premium, canPublishPremium, ownerPubkey]);
 
   const publish = async () => {
     if (!text.trim()) {
@@ -2329,6 +2338,310 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
             ) : null}
           </div>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------- Premium composer ----------
+const PREMIUM_MEMBERSHIP_TIERS = [500, 2000, 5000];
+const PREMIUM_UNLOCK_TIERS = [50, 200, 500];
+
+function looksLikeVideoUrl(url: string) {
+  return /\.(mp4|webm|mov|m4v|mkv)(\?|#|$)/i.test(url);
+}
+
+/**
+ * The premium-tailored members-only composer: the Crays Premium Creator
+ * Tooling look (light theme, amber accents) with image and video support. It
+ * seals the content NIP-44-encrypted before publishing — media URLs live
+ * inside the ciphertext, so nothing leaks to relays.
+ */
+function PremiumComposerModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const nostr = useNostr();
+  const ui = useUI();
+  const canPublish = isCreatorPassActive(useCreatorPass());
+  const ownerPubkey = nostr.account?.pubkey;
+  const [text, setText] = useState("");
+  const [media, setMedia] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [price, setPrice] = useState(500);
+  const [unlockPrice, setUnlockPrice] = useState(200);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setText("");
+    setMedia([]);
+    setPrice(500);
+    setUnlockPrice(200);
+    setBusy(false);
+    // Pre-fill with the pricing the creator customized on their profile.
+    if (ownerPubkey) {
+      fetchProgramPricing(ownerPubkey)
+        .then((pricing) => {
+          if (!pricing) return;
+          setPrice(pricing.badgeSats);
+          if (pricing.unlockSats != null) setUnlockPrice(pricing.unlockSats);
+        })
+        .catch(() => undefined);
+    }
+  }, [open, ownerPubkey]);
+
+  const attachMedia = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setUploading(true);
+    try {
+      const uploaded: string[] = [];
+      for (const file of Array.from(files).slice(0, 4)) {
+        if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
+          toast.error(`${file.name} isn't an image or video.`);
+          continue;
+        }
+        uploaded.push(await nostr.uploadFile(file));
+      }
+      if (uploaded.length) setMedia((all) => [...all, ...uploaded].slice(0, 4));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't upload that media.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const publish = async () => {
+    if (!text.trim() && media.length === 0) {
+      toast.error("Write your premium content first.");
+      return;
+    }
+    if (!nostr.canDeliverKeys()) {
+      toast.error(
+        "Your signer doesn't support NIP-44 encryption, so members-only posts can't be locked. Use a passkey account, an nsec, or an extension with NIP-44.",
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      // Media URLs ride inside the encrypted content: relays only ever see
+      // ciphertext, so members-only media never leaks publicly.
+      const plain = [text.trim(), ...media].filter(Boolean).join("\n\n");
+      const contentKey = generateContentKey();
+      const content = await encryptContent(plain, contentKey);
+      const event = await nostr.publish({
+        content,
+        kind: 1,
+        tags: [
+          ["premium", String(price)],
+          ["premium-unlock", String(unlockPrice)],
+          ["encrypted", EXCLUSIVE_SCHEME],
+          ["alt", "Members-only post — the text is encrypted and unlocks for members in Crays."],
+        ],
+      });
+
+      // Share the content key with the author's other devices and members.
+      if (event) {
+        try {
+          const seal = await nostr.sealNewPost({
+            postId: event.id,
+            key: contentKey,
+            badgeSats: price,
+            unlockSats: unlockPrice,
+          });
+          if (!seal.deposited) {
+            toast.warning(
+              "Published, but the key vault deposit failed — purchases made while you're offline may not unlock.",
+            );
+          }
+        } catch {
+          toast.error(
+            "Published, but the key couldn't be shared with every member yet. Keep Crays open so their unlock requests can be answered.",
+          );
+        }
+      }
+
+      toast.success("Premium post published to Nostr");
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't publish that.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const tierClasses = (active: boolean) =>
+    `rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors ${
+      active
+        ? "bg-white text-amber-900 shadow-sm ring-1 ring-amber-200"
+        : "text-gray-400"
+    }`;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="overflow-hidden border-0 bg-zinc-900 p-0 text-white shadow-elevated ring-1 ring-white/10 sm:max-w-[480px]">
+        {/* Creator tools gradient: black base with warm, violet and green glows */}
+        <div
+          aria-hidden
+          className="absolute inset-0 opacity-80"
+          style={{
+            background:
+              "radial-gradient(at 15% 10%, oklch(0.72 0.18 55 / 0.45) 0, transparent 45%), radial-gradient(at 85% 90%, oklch(0.58 0.22 265 / 0.4) 0, transparent 50%), radial-gradient(at 70% 20%, oklch(0.7 0.15 150 / 0.18) 0, transparent 35%)",
+          }}
+        />
+        <div className="relative max-h-[85dvh] space-y-4 overflow-y-auto p-6">
+          <div>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1 ring-white/10 backdrop-blur-sm">
+              <Crown className="size-3 text-amber-300" /> Crays premium
+            </span>
+            <h2 className="mt-2.5 text-[20px] font-semibold tracking-tight text-white">
+              Premium post
+            </h2>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-zinc-300">
+              Sealed on your device before it leaves. Only your members — or a one-time unlock — can
+              ever read it.
+            </p>
+          </div>
+
+          {!canPublish ? (
+            <div className="rounded-2xl bg-white/5 p-4 text-center ring-1 ring-white/10 backdrop-blur-sm">
+              <p className="text-[13px] font-semibold text-white">Premium is required</p>
+              <p className="mt-1 text-[11.5px] leading-relaxed text-zinc-300">
+                Activate Crays premium to publish members-only posts.
+              </p>
+              <button
+                onClick={() => {
+                  onClose();
+                  ui.openUpgrade();
+                }}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-amber-400 px-4 py-2 text-[12px] font-semibold text-amber-950 transition-colors hover:bg-amber-300"
+              >
+                <Crown className="size-3.5" /> Activate premium
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-xl bg-white/5 p-1 ring-1 ring-white/10 backdrop-blur-sm transition-all focus-within:ring-amber-400/50">
+                <textarea
+                  rows={5}
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="Write something worth paying for…"
+                  className="w-full resize-none border-none bg-transparent px-3 py-2.5 text-[14px] leading-relaxed text-white outline-none placeholder:text-zinc-500"
+                />
+              </div>
+
+              {media.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {media.map((url) => (
+                    <div key={url} className="relative">
+                      {looksLikeVideoUrl(url) ? (
+                        <video
+                          src={url}
+                          muted
+                          preload="metadata"
+                          className="size-20 rounded-lg object-cover ring-1 ring-white/10"
+                        />
+                      ) : (
+                        <img
+                          src={url}
+                          alt=""
+                          className="size-20 rounded-lg object-cover ring-1 ring-white/10"
+                        />
+                      )}
+                      <button
+                        onClick={() => setMedia((all) => all.filter((item) => item !== url))}
+                        className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full bg-zinc-900 text-white shadow ring-1 ring-white/20"
+                        aria-label="Remove media"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="rounded-2xl bg-white/5 p-3 ring-1 ring-white/10 backdrop-blur-sm">
+                <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200/90">
+                  <Crown className="size-3" /> Membership · {BADGE_DAYS} days
+                </p>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {PREMIUM_MEMBERSHIP_TIERS.map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setPrice(p)}
+                      className={tierClasses(price === p)}
+                    >
+                      {p.toLocaleString()} sats
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-3 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200/90">
+                  <Zap className="size-3" /> Single-post unlock
+                </p>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {PREMIUM_UNLOCK_TIERS.map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setUnlockPrice(p)}
+                      className={tierClasses(unlockPrice === p)}
+                    >
+                      {p.toLocaleString()} sats
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <p className="text-center text-[11px] leading-relaxed text-zinc-400">
+                Your members read everything free · non-members pay{" "}
+                <span className="font-semibold text-amber-300">
+                  {unlockPrice.toLocaleString()} sats
+                </span>{" "}
+                for this post alone
+              </p>
+
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*,video/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  void attachMedia(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                onClick={() => {
+                  if (!ui.requireAuth("attach media")) return;
+                  fileRef.current?.click();
+                }}
+                className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-amber-300 transition-colors hover:text-amber-200"
+              >
+                {uploading ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <ImageIcon className="size-3.5" />
+                )}
+                {uploading ? "Uploading…" : "Add image or video"}
+              </button>
+
+              <button
+                disabled={busy || (!text.trim() && media.length === 0)}
+                onClick={() => void publish()}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-400 px-4 py-3 text-[14px] font-bold text-amber-950 shadow-lg shadow-amber-500/25 transition-all hover:bg-amber-300 active:scale-[0.99] disabled:opacity-50"
+              >
+                {busy ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" /> Sealing & publishing…
+                  </>
+                ) : (
+                  <>
+                    <Crown className="size-4" /> Publish premium post
+                  </>
+                )}
+              </button>
+            </>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

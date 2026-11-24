@@ -18,7 +18,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { nip19, type NostrEvent } from "nostr-tools";
 import { AvatarTile } from "./avatar-tile";
@@ -29,6 +29,7 @@ import { compactNumber, timeAgo } from "@/lib/format";
 import { decryptContent } from "@/lib/nostr/exclusive";
 import {
   contentWithoutImages,
+  extractMedia,
   fetchNoteLikes,
   fetchReplies,
   type FeedNote,
@@ -369,9 +370,16 @@ export function PostCard({ post }: { post: Post }) {
     }
   };
 
-  const images = (
-    post.images?.length ? post.images : post.image?.url ? [post.image.url] : []
-  ).filter((url) => !failedImages.has(url));
+  const baseImages = post.images?.length ? post.images : post.image?.url ? [post.image.url] : [];
+  // Decrypted members-only posts carry their media inside the plaintext.
+  const decryptedMedia = useMemo(
+    () => (plaintext ? extractMedia(plaintext) : { images: [], videos: [] }),
+    [plaintext],
+  );
+  const images = Array.from(new Set([...decryptedMedia.images, ...baseImages])).filter(
+    (url) => !failedImages.has(url),
+  );
+  const videos = decryptedMedia.videos.filter((url) => !failedImages.has(url));
 
   return (
     <article className="min-w-0 space-y-4 overflow-hidden rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5 transition-shadow hover:shadow-elevated sm:p-6">
@@ -610,6 +618,33 @@ export function PostCard({ post }: { post: Post }) {
               <EyeOff className="size-3" /> Hide
             </button>
           )}
+        </div>
+      )}
+
+      {!locked && videos.length > 0 && (!post.sensitive || revealed) && (
+        <div className="space-y-2">
+          {videos.map((url) => (
+            <div
+              key={url}
+              className="relative overflow-hidden rounded-xl bg-zinc-900 ring-1 ring-black/5"
+            >
+              <video src={url} controls preload="metadata" className="w-full" />
+            </div>
+          ))}
+        </div>
+      )}
+      {!locked && videos.length > 0 && post.sensitive && !revealed && (
+        <div className="flex items-center justify-between gap-3 rounded-xl bg-zinc-50 px-4 py-3 ring-1 ring-zinc-100">
+          <p className="inline-flex items-center gap-2 text-[11.5px] text-zinc-500">
+            <EyeOff className="size-3.5 shrink-0 text-zinc-400" />
+            {videos.length} sensitive video{videos.length === 1 ? "" : "s"} hidden
+          </p>
+          <button
+            onClick={() => setRevealed(true)}
+            className="rounded-full bg-white px-3 py-1.5 text-[11.5px] font-semibold text-zinc-900 ring-1 ring-zinc-200 transition-colors hover:bg-zinc-100"
+          >
+            Tap to view
+          </button>
         </div>
       )}
 
