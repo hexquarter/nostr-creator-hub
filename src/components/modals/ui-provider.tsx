@@ -13,7 +13,6 @@ import { QRCodeSVG } from "qrcode.react";
 import type { EventTemplate, NostrEvent } from "nostr-tools";
 import { useNostr } from "@/components/nostr-provider";
 import { useBreez } from "@/components/breez-provider";
-import { useNpubcash } from "@/components/npubcash-provider";
 import type { Profile } from "@/lib/nostr/profiles";
 import {
   fetchProfile,
@@ -533,7 +532,6 @@ function ZapModal({
 }) {
   const nostr = useNostr();
   const breez = useBreez();
-  const npubcash = useNpubcash();
   const price = useBtcPrice();
   const devSettings = useDevPaymentSettings();
   const lightningDisabled = DEV_PAYMENTS_ENABLED && devSettings.disableLightning;
@@ -582,13 +580,11 @@ function ZapModal({
       toast.error("Open the creator's profile to zap them.");
       return;
     }
-    // The zap payment itself branches in nostr.zap: a NIP-47 wallet when one
-    // is connected, the browser's Breez wallet otherwise, then the account's
-    // npub.cash balance.
-    const paysFromBreez = !nostr.wallet.connected && breez.available;
-    const paysFromCashu = !nostr.wallet.connected && !breez.available;
-    if (paysFromCashu && !nostr.account) {
-      toast.error("Connect a Lightning wallet first.");
+    // The zap payment itself branches in nostr.zap: the self-custodial browser
+    // wallet first (created automatically if needed), then a NIP-47 wallet.
+    const paysFromBreez = breez.available || (breez.canCreate && !nostr.wallet.connected);
+    if (!paysFromBreez && !nostr.wallet.connected) {
+      toast.error("Create a wallet or connect a Lightning wallet first.");
       return;
     }
     setBusy(true);
@@ -600,7 +596,6 @@ function ZapModal({
         note: options.note ?? null,
       });
       if (paysFromBreez) void breez.refresh();
-      if (paysFromCashu) void npubcash.refresh();
       toast.success(`Zapped ${amount.toLocaleString()} sats ⚡`);
       onClose();
     } catch (error) {
@@ -675,7 +670,7 @@ function ZapModal({
             />
           </Field>
 
-          {!nostr.wallet.connected && !breez.available && !nostr.account && (
+          {!breez.available && !nostr.wallet.connected && (
             <div className="space-y-2 rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200">
               <p className="text-[12px] font-semibold text-zinc-800">Connect a Lightning wallet</p>
               <p className="text-[11.5px] text-zinc-500">
@@ -709,10 +704,7 @@ function ZapModal({
           <PrimaryBtn
             className="!bg-amber-500 hover:!bg-amber-600"
             disabled={
-              lightningDisabled ||
-              busy ||
-              !profile ||
-              !(nostr.wallet.connected || breez.available || nostr.account)
+              lightningDisabled || busy || !profile || !(breez.available || nostr.wallet.connected)
             }
             onClick={send}
           >
@@ -2261,16 +2253,16 @@ function UpgradeModal({ open, onClose }: { open: boolean; onClose: () => void })
 function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const nostr = useNostr();
   const breez = useBreez();
-  const npubcash = useNpubcash();
   const price = useBtcPrice();
   const [dest, setDest] = useState("");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   // Without a NIP-47 connection the browser's Breez wallet pays instead.
-  const nwcSend = nostr.wallet.connected;
-  const breezSend = !nwcSend && breez.available;
-  const cashuSend = !nwcSend && !breezSend && npubcash.available;
-  const canPay = nwcSend || breezSend || cashuSend;
+  // Payment source priority: the self-custodial browser wallet first (it is
+  // created on demand if needed), then a connected NIP-47 wallet.
+  const breezSend = breez.available;
+  const nwcSend = !breezSend && nostr.wallet.connected;
+  const canPay = breezSend || nwcSend || breez.canCreate;
 
   useEffect(() => {
     if (open) {
@@ -2294,13 +2286,13 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
       const invoice = isLightningInvoice(dest)
         ? dest.trim()
         : await requestPaymentInvoice(dest, sats);
-      if (nwcSend) {
-        await nostr.payInvoice(invoice);
-      } else if (breezSend) {
+      if (breezSend || (breez.canCreate && !nwcSend)) {
+        // First use creates the wallet automatically, then pays from it.
+        if (!breez.available) await breez.create();
         await breez.pay({ invoice, amountSats: sats });
         void breez.refresh();
       } else {
-        await npubcash.pay({ invoice, amountSats: sats });
+        await nostr.payInvoice(invoice);
       }
       toast.success(`Sent ${sats ? `${sats.toLocaleString()} sats` : "payment"}`);
       onClose();
@@ -2319,13 +2311,13 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
             <ArrowUpRight className="size-5" /> Send sats
           </DialogTitle>
           <DialogDescription>
-            {nwcSend
-              ? `From ${nostr.wallet.alias ?? "your Lightning wallet"}${nostr.wallet.balanceSats != null ? ` · ${nostr.wallet.balanceSats.toLocaleString()} sats` : ""}`
-              : breezSend
-                ? `From your Crays wallet${breez.balanceSats != null ? ` · ${breez.balanceSats.toLocaleString()} sats` : ""}`
-                : cashuSend
-                  ? `From your npub.cash wallet${npubcash.balanceSats != null ? ` · ${npubcash.balanceSats.toLocaleString()} sats` : ""}`
-                  : "Connect a Lightning wallet to send payments."}
+            {breez.available
+              ? `From your Crays wallet${breez.balanceSats != null ? ` · ${breez.balanceSats.toLocaleString()} sats` : ""}`
+              : breez.canCreate && !nwcSend
+                ? "From your Crays wallet — it's set up automatically on first send."
+                : nwcSend
+                  ? `From ${nostr.wallet.alias ?? "your Lightning wallet"}${nostr.wallet.balanceSats != null ? ` · ${nostr.wallet.balanceSats.toLocaleString()} sats` : ""}`
+                  : "Create a self-custodial wallet to send payments."}
           </DialogDescription>
         </DialogHeader>
         {!canPay ? (
@@ -2369,14 +2361,25 @@ function SendModal({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const nostr = useNostr();
+  const breez = useBreez();
   const price = useBtcPrice();
-  const address = nostr.wallet.address;
+  // The Crays wallet's own npub-based Lightning address is the default
+  // receive destination; the profile address (external) is the fallback.
+  const address = (breez.available ? breez.address : null) ?? nostr.wallet.address;
+  const [invoiceMode, setInvoiceMode] = useState(false);
   const [amount, setAmount] = useState(1000);
   const [invoice, setInvoice] = useState("");
   const [busy, setBusy] = useState(false);
+  // The self-custodial Crays wallet creates real BOLT-11 invoices, and is set
+  // up automatically if it doesn't exist yet.
+  const breezReceive = breez.available || breez.canCreate;
+  // The Lightning address is the primary way to receive: it is persistent and
+  // shareable, while invoices are one-off fixed amounts.
+  const showAddress = Boolean(address) && !invoiceMode;
 
   useEffect(() => {
     if (open) {
+      setInvoiceMode(false);
       setAmount(1000);
       setInvoice("");
       setBusy(false);
@@ -2386,7 +2389,10 @@ function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void })
   const generate = async () => {
     setBusy(true);
     try {
-      const created = await nostr.makeInvoice(amount, "Crays deposit");
+      if (!breez.available && breezReceive) await breez.create();
+      const created = breezReceive
+        ? await breez.receive(amount, "Crays deposit")
+        : await nostr.makeInvoice(amount, "Crays deposit");
       setInvoice(created.invoice);
     } catch (error) {
       toast.error(
@@ -2405,88 +2411,106 @@ function ReceiveModal({ open, onClose }: { open: boolean; onClose: () => void })
             <ArrowDownLeft className="size-5" /> Receive sats
           </DialogTitle>
           <DialogDescription>
-            {nostr.wallet.connected
-              ? "Create a Lightning invoice from your connected wallet."
-              : address
-                ? nostr.wallet.addressSource === "hosted"
-                  ? "Your wallet is derived from your Nostr key. Sats arrive at your npub.cash address — claim them with your Nostr key at npub.cash."
-                  : "Share your Lightning address — payments arrive with no setup."
-                : "Sign in to derive a Lightning wallet from your Nostr identity."}
+            {showAddress
+              ? breez.available && breez.address === address
+                ? "Your self-custodial Crays wallet address — share it anywhere; payments land directly in your wallet."
+                : "Your Lightning address — share it anywhere; payments arrive at your own wallet."
+              : invoice
+                ? "Pay this invoice to receive the sats in your wallet."
+                : breezReceive
+                  ? "Create a Lightning invoice that pays into your self-custodial Crays wallet."
+                  : nostr.wallet.connected
+                    ? "Create a Lightning invoice from your connected wallet."
+                    : "Sign in to set up your wallet."}
           </DialogDescription>
         </DialogHeader>
-        {!nostr.wallet.connected ? (
-          address ? (
-            <div className="rounded-xl bg-zinc-50 p-5 text-center ring-1 ring-zinc-100">
-              <div className="mx-auto grid size-44 place-items-center rounded-xl bg-white p-3 shadow-sm">
-                <QRCodeSVG value={`lightning:${address}`} size={152} level="M" />
-              </div>
-              <p className="mt-3 break-all font-mono text-[11px] text-zinc-600">{address}</p>
-              <button
-                onClick={() => {
-                  void navigator.clipboard.writeText(address);
-                  toast.success("Lightning address copied");
-                }}
-                className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand hover:underline"
-              >
-                <Copy className="size-3" /> Copy Lightning address
-              </button>
+        {address && !invoiceMode ? (
+          <div className="rounded-xl bg-zinc-50 p-5 text-center ring-1 ring-zinc-100">
+            <div className="mx-auto grid size-44 place-items-center rounded-xl bg-white p-3 shadow-sm">
+              <QRCodeSVG value={`lightning:${address}`} size={152} level="M" />
             </div>
-          ) : (
-            <WalletConnectBlock />
-          )
-        ) : (
-          <>
-            {invoice ? (
-              <div className="rounded-xl bg-zinc-50 p-5 text-center ring-1 ring-zinc-100">
-                <div className="mx-auto grid size-44 place-items-center rounded-xl bg-white p-3 shadow-sm">
-                  <QRCodeSVG value={invoice.toUpperCase()} size={152} level="M" />
-                </div>
-                <p className="mt-3 break-all font-mono text-[10.5px] text-zinc-600">
-                  {invoice.slice(0, 48)}…
-                </p>
+            <p className="mt-3 break-all font-mono text-[11px] text-zinc-600">{address}</p>
+            <button
+              onClick={() => void navigator.clipboard.writeText(address)}
+              className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand hover:underline"
+            >
+              <Copy className="size-3" /> Copy Lightning address
+            </button>
+            {breezReceive && (
+              <p className="mt-2 text-[11px] text-zinc-500">
+                Need a fixed-amount invoice instead?{" "}
                 <button
-                  onClick={() => {
-                    void navigator.clipboard.writeText(invoice);
-                    toast.success("Invoice copied");
-                  }}
-                  className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand hover:underline"
+                  onClick={() => setInvoiceMode(true)}
+                  className="font-semibold text-brand hover:underline"
                 >
-                  <Copy className="size-3" /> Copy invoice
+                  Create one
                 </button>
-              </div>
-            ) : (
-              <Field label="Amount (sats)" hint={formatUsd(satsToUsd(amount, price))}>
-                <input
-                  type="number"
-                  min={1}
-                  value={amount}
-                  onChange={(e) => setAmount(Math.max(1, Number(e.target.value) || 1))}
-                  className={inputCls}
-                />
-              </Field>
+              </p>
             )}
-          </>
-        )}
+          </div>
+        ) : invoice ? (
+          <div className="rounded-xl bg-zinc-50 p-5 text-center ring-1 ring-zinc-100">
+            <div className="mx-auto grid size-44 place-items-center rounded-xl bg-white p-3 shadow-sm">
+              <QRCodeSVG value={invoice.toUpperCase()} size={152} level="M" />
+            </div>
+            <p className="mt-3 break-all font-mono text-[10.5px] text-zinc-600">
+              {invoice.slice(0, 48)}…
+            </p>
+            <button
+              onClick={() => {
+                void navigator.clipboard.writeText(invoice);
+                toast.success("Invoice copied");
+              }}
+              className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand hover:underline"
+            >
+              <Copy className="size-3" /> Copy invoice
+            </button>
+            {address && (
+              <p className="mt-2 text-[11px] text-zinc-500">
+                Prefer your Lightning address?{" "}
+                <button
+                  onClick={() => setInvoiceMode(false)}
+                  className="font-semibold text-brand hover:underline"
+                >
+                  Show it
+                </button>
+              </p>
+            )}
+          </div>
+        ) : (nostr.wallet.connected || breezReceive) && invoiceMode ? (
+          <Field label="Amount (sats)" hint={formatUsd(satsToUsd(amount, price))}>
+            <input
+              type="number"
+              min={1}
+              value={amount}
+              onChange={(e) => setAmount(Math.max(1, Number(e.target.value) || 1))}
+              className={inputCls}
+            />
+          </Field>
+        ) : !nostr.wallet.connected && !breezReceive ? (
+          <WalletConnectBlock />
+        ) : null}
         <DialogFooter>
           <GhostBtn onClick={onClose}>Close</GhostBtn>
-          {nostr.wallet.connected ? (
-            <PrimaryBtn
-              disabled={busy}
-              onClick={() =>
-                void (invoice
-                  ? (navigator.clipboard.writeText(invoice),
-                    toast.success("Invoice copied"),
-                    onClose())
-                  : generate())
-              }
-            >
+          {invoiceMode && !invoice && (nostr.wallet.connected || breezReceive) ? (
+            <PrimaryBtn disabled={busy} onClick={() => void generate()}>
               {busy ? <Loader2 className="size-4 animate-spin" /> : null}
-              {invoice ? "Copy invoice" : "Generate invoice"}
+              Generate invoice
             </PrimaryBtn>
-          ) : address ? (
+          ) : invoice ? (
             <PrimaryBtn
               onClick={() => {
-                void navigator.clipboard.writeText(address);
+                void navigator.clipboard.writeText(invoice);
+                toast.success("Invoice copied");
+                onClose();
+              }}
+            >
+              <Copy className="size-4" /> Copy invoice
+            </PrimaryBtn>
+          ) : showAddress ? (
+            <PrimaryBtn
+              onClick={() => {
+                void navigator.clipboard.writeText(address!);
                 toast.success("Lightning address copied");
                 onClose();
               }}
@@ -2507,9 +2531,9 @@ function TopUpModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [invoice, setInvoice] = useState("");
   const [busy, setBusy] = useState(false);
   const sats = price ? Math.max(1, Math.round((usd / price.usd) * 100_000_000)) : 0;
-  // Without a NIP-47 wallet, card checkout tops up the browser's Breez wallet
-  // directly (it is created on first use); return to /wallet to see the balance.
-  const cardTopUp = !nostr.wallet.connected && BREEZ_MOONPAY_CONFIGURED;
+  // Card checkout funds the self-custodial browser wallet (it is created on
+  // first use); only without Breez configured does a NIP-47 invoice fall back.
+  const cardTopUp = BREEZ_MOONPAY_CONFIGURED;
 
   useEffect(() => {
     if (open) {

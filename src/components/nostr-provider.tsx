@@ -65,15 +65,9 @@ import { randomHex } from "@/lib/nostr/signer";
 import { uploadBlob, uploadFile as uploadFileToBlossom } from "@/lib/nostr/blossom";
 import { fetchDirectMessages, sendDirectMessage, type DirectMessage } from "@/lib/nostr/dm";
 import { NwcClient, type NwcTransaction } from "@/lib/nostr/nwc";
-import {
-  hostedLightningAddress,
-  lightningAddressFor,
-  lightningAddressSource,
-  type LightningAddressSource,
-} from "@/lib/nostr/lightning";
+import { lightningAddressFor } from "@/lib/nostr/lightning";
 import { requestZapInvoice } from "@/lib/nostr/zaps";
 import { hasBreezWallet, payLightningInvoice } from "@/lib/payments/breez-wallet";
-import { payFromNpubcash } from "@/lib/payments/cashu-wallet";
 import { setPurchaseOwner, syncCreatorPurchases } from "@/lib/nostr/badges";
 import {
   deliverNewPostKeys,
@@ -101,11 +95,11 @@ export type WalletState = {
   network?: string;
   balanceSats: number | null;
   /**
-   * Lightning address derived from the Nostr identity: the profile's
-   * lud16/lud06 when present, otherwise the account's npub.cash address.
+   * The account's own Lightning address, read from their Nostr profile
+   * (lud16/lud06). Crays derives nothing: receiving is self-custodial via
+   * the Crays wallet or the user's own external address.
    */
   address?: string;
-  addressSource?: LightningAddressSource;
   error?: string;
 };
 
@@ -338,14 +332,12 @@ export function NostrProvider({ children }: { children: ReactNode }) {
           network: info.status === "fulfilled" ? info.value.network : undefined,
           balanceSats: balance.status === "fulfilled" ? balance.value : null,
           address: w.address,
-          addressSource: w.addressSource,
         }));
       } catch (error) {
         if (cancelled) return;
         setWallet((w) => ({
           ...EMPTY_WALLET,
           address: w.address,
-          addressSource: w.addressSource,
           error: error instanceof Error ? error.message : "Couldn't reconnect your wallet.",
         }));
       }
@@ -355,25 +347,16 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // The Lightning address is derived from the Nostr identity at login, so
-  // receiving works without connecting a separate wallet. Profiles without a
-  // lud16/lud06 fall back to the account's npub.cash address.
+  // The Lightning address comes from the Nostr profile (lud16/lud06). There
+  // is no hosted fallback: users bring their own address, and the Crays
+  // wallet handles self-custodial receiving without one.
   useEffect(() => {
     if (!account) {
-      setWallet((w) =>
-        w.address === undefined && w.addressSource === undefined
-          ? w
-          : { ...w, address: undefined, addressSource: undefined },
-      );
+      setWallet((w) => (w.address === undefined ? w : { ...w, address: undefined }));
       return;
     }
     const address = lightningAddressFor(account.pubkey, account.profile);
-    const addressSource = lightningAddressSource(account.profile);
-    setWallet((w) =>
-      w.address === address && w.addressSource === addressSource
-        ? w
-        : { ...w, address, addressSource },
-    );
+    setWallet((w) => (w.address === address ? w : { ...w, address: address || undefined }));
   }, [account]);
 
   const finishSignIn = useCallback(
@@ -677,13 +660,11 @@ export function NostrProvider({ children }: { children: ReactNode }) {
         network: info.status === "fulfilled" ? info.value.network : undefined,
         balanceSats: balance.status === "fulfilled" ? balance.value : null,
         address: w.address,
-        addressSource: w.addressSource,
       }));
     } catch (error) {
       setWallet((w) => ({
         ...EMPTY_WALLET,
         address: w.address,
-        addressSource: w.addressSource,
         error: error instanceof Error ? error.message : "Couldn't connect that wallet.",
       }));
       throw error;
@@ -696,7 +677,6 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     setWallet((w) => ({
       ...EMPTY_WALLET,
       address: w.address,
-      addressSource: w.addressSource,
     }));
   }, []);
 
@@ -768,14 +748,7 @@ export function NostrProvider({ children }: { children: ReactNode }) {
         ...input,
         signer: signerRef.current,
       });
-      const client = walletRef.current;
-      if (client) {
-        const payment = await client.payInvoice(invoice.invoice);
-        void refreshBalance();
-        return { preimage: payment.preimage, invoice: invoice.invoice };
-      }
-      // No NIP-47 wallet connected: the browser's Breez wallet (card top-ups)
-      // pays the zap instead.
+      // Priority: the self-custodial browser wallet, then a NIP-47 wallet.
       if (hasBreezWallet()) {
         await payLightningInvoice({
           invoice: invoice.invoice,
@@ -784,12 +757,13 @@ export function NostrProvider({ children }: { children: ReactNode }) {
         });
         return { invoice: invoice.invoice };
       }
-      // Last resort: melt the account's npub.cash (Cashu) balance.
-      const pubkey = account?.pubkey;
-      const signer = signerRef.current;
-      if (!pubkey || !signer) throw new Error("Connect a Lightning wallet first.");
-      await payFromNpubcash(pubkey, invoice.invoice, signer);
-      return { invoice: invoice.invoice };
+      const client = walletRef.current;
+      if (client) {
+        const payment = await client.payInvoice(invoice.invoice);
+        void refreshBalance();
+        return { preimage: payment.preimage, invoice: invoice.invoice };
+      }
+      throw new Error("Create a wallet or connect a Lightning wallet first.");
     },
     [refreshBalance, account?.pubkey],
   );
@@ -842,11 +816,12 @@ export function NostrProvider({ children }: { children: ReactNode }) {
     stopKeyServerRef.current = null;
     const pubkey = account?.pubkey;
     const signer = signerRef.current;
-    if (!pubkey || !signer || typeof signer.nip44Encrypt !== "function") return;
-    // The receive address readers pay at: the profile's Lightning address,
-    // else the account's hosted npub.cash one.
-    const address = profileAddress || hostedLightningAddress(pubkey);
-    stopKeyServerRef.current = startCreatorKeyServer(signer, pubkey, address);
+    // The key server answers paid readers; without the creator's own profile
+    // Lightning address there is no self-custodial receive address to offer.
+    if (!pubkey || !signer || typeof signer.nip44Encrypt !== "function" || !profileAddress) {
+      return;
+    }
+    stopKeyServerRef.current = startCreatorKeyServer(signer, pubkey, profileAddress);
     return () => {
       stopKeyServerRef.current?.();
       stopKeyServerRef.current = null;

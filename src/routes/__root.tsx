@@ -11,7 +11,6 @@ import { useEffect, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { UIProvider } from "@/components/modals/ui-provider";
 import { NostrProvider } from "@/components/nostr-provider";
-import { NpubcashProvider } from "@/components/npubcash-provider";
 import { BreezProvider } from "@/components/breez-provider";
 
 import appCss from "../styles.css?url";
@@ -135,15 +134,13 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <NostrProvider>
-        <NpubcashProvider>
-          <BreezProvider>
-            <UIProvider>
-              {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-              <Outlet />
-              <Toaster position="bottom-right" richColors closeButton />
-            </UIProvider>
-          </BreezProvider>
-        </NpubcashProvider>
+        <BreezProvider>
+          <UIProvider>
+            {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+            <Outlet />
+            <Toaster position="bottom-right" richColors closeButton />
+          </UIProvider>
+        </BreezProvider>
       </NostrProvider>
     </QueryClientProvider>
   );

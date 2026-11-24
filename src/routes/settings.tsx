@@ -78,7 +78,6 @@ function Settings() {
   });
 
   const address = nostr.wallet.address;
-  const addressSource = nostr.wallet.addressSource;
 
   useEffect(() => {
     setForm({
@@ -144,19 +143,6 @@ function Settings() {
       toast.error(error instanceof Error ? error.message : "Couldn't save your profile.");
     } finally {
       setSaving(false);
-    }
-  };
-
-  const saveDerivedAddress = async () => {
-    if (!nostr.account || !address) return;
-    setSavingAddress(true);
-    try {
-      await nostr.updateProfile({ lud16: address });
-      toast.success("Lightning address saved to your profile");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Couldn't save the address.");
-    } finally {
-      setSavingAddress(false);
     }
   };
 
@@ -285,7 +271,7 @@ function Settings() {
                 label="Lightning address"
                 value={form.lud16}
                 onChange={(v) => setForm((f) => ({ ...f, lud16: v }))}
-                hint="Leave blank to use the npub.cash address derived from your key."
+                hint="Your own address (e.g. your wallet's) — this is where other apps send sats."
               />
               <Field
                 label="Website"
@@ -513,7 +499,7 @@ function Settings() {
           <Panel
             id="wallet"
             title="Wallet"
-            desc="Your Lightning wallet is derived from your Nostr identity — no separate sign-up."
+            desc="Your Lightning address comes from your own profile; balances live in your self-custodial Crays wallet."
           >
             <div className="rounded-xl bg-zinc-50 p-4 ring-1 ring-black/5">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -522,7 +508,7 @@ function Settings() {
                     Lightning address
                   </p>
                   <p className="mt-1 break-all font-mono text-[12.5px] text-zinc-800">
-                    {address ?? "Sign in to derive your wallet"}
+                    {address ?? "Set one in your profile"}
                   </p>
                 </div>
                 {address && (
@@ -539,34 +525,17 @@ function Settings() {
               </div>
               {address && (
                 <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-500">
-                  {addressSource === "profile"
-                    ? "Read from your Nostr profile. Receiving works right away."
-                    : "Derived from your Nostr key via npub.cash. Sats are held for you until you claim them with your Nostr key at npub.cash."}
+                  Read from your Nostr profile — other apps pay you here. Your Crays wallet receives
+                  self-custodially with or without an address.
                 </p>
               )}
               <div className="mt-3 flex flex-wrap gap-2">
-                {address && (
-                  <button
-                    onClick={() => ui.openReceive()}
-                    className="inline-flex items-center gap-1 rounded-lg bg-zinc-900 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-black"
-                  >
-                    <Zap className="size-3" /> Receive sats
-                  </button>
-                )}
-                {addressSource === "hosted" && nostr.account && (
-                  <button
-                    onClick={() => void saveDerivedAddress()}
-                    disabled={savingAddress}
-                    className="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-[11.5px] font-semibold text-zinc-700 ring-1 ring-black/5 hover:bg-zinc-100 disabled:opacity-50"
-                  >
-                    {savingAddress ? (
-                      <Loader2 className="size-3 animate-spin" />
-                    ) : (
-                      <Copy className="size-3" />
-                    )}
-                    Use on my profile
-                  </button>
-                )}
+                <button
+                  onClick={() => ui.openReceive()}
+                  className="inline-flex items-center gap-1 rounded-lg bg-zinc-900 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-black"
+                >
+                  <Zap className="size-3" /> Receive sats
+                </button>
               </div>
             </div>
 

@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@breeztech/breez-sdk-spark": "0.28.6",
-    "@cashu/cashu-ts": "^4.13.1",
     "@fontsource-variable/inter": "^5.2.8",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",

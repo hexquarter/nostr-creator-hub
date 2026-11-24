@@ -24,11 +24,11 @@ export const CREATOR_PASS_USD = 49;
 
 /**
  * Where creators pay for the Crays badge. Point this at the real Crays
- * Lightning address (or LNURL) with `VITE_CRAYS_LIGHTNING_ADDRESS`; the
- * fallback is a placeholder until that address exists.
+ * Lightning address (or LNURL) with `VITE_CRAYS_LIGHTNING_ADDRESS`. There is
+ * no default: the platform's own address must be configured explicitly.
  */
 export const CREATOR_PASS_ADDRESS =
-  (import.meta.env.VITE_CRAYS_LIGHTNING_ADDRESS as string | undefined)?.trim() || "crays@npub.cash";
+  (import.meta.env.VITE_CRAYS_LIGHTNING_ADDRESS as string | undefined)?.trim() || "";
 
 /**
  * False while checkout still points at the placeholder address, which cannot

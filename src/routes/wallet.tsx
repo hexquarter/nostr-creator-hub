@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { JSX, useCallback, useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { PageShell } from "@/components/page-shell";
 import {
@@ -15,7 +15,6 @@ import {
 import { useUI } from "@/components/modals/ui-provider";
 import { useNostr } from "@/components/nostr-provider";
 import { useBreez } from "@/components/breez-provider";
-import { useNpubcash } from "@/components/npubcash-provider";
 import { useBtcPrice, formatUsd, formatSats } from "@/lib/nostr/price";
 import type { NwcTransaction } from "@/lib/nostr/nwc";
 import { timeAgo } from "@/lib/format";
@@ -38,30 +37,36 @@ function WalletPage() {
   const ui = useUI();
   const nostr = useNostr();
   const breez = useBreez();
-  const npubcash = useNpubcash();
   const price = useBtcPrice();
   const [transactions, setTransactions] = useState<NwcTransaction[]>([]);
   const [loadingTx, setLoadingTx] = useState(false);
   const [savingAddress, setSavingAddress] = useState(false);
+  const [ownAddress, setOwnAddress] = useState("");
+  const [editingAddress, setEditingAddress] = useState(false);
 
   const wallet = nostr.wallet;
   const balance = wallet.balanceSats;
-  // Derived at login from the Nostr identity, so receiving never needs a
-  // separate wallet connection.
+  // The user's own Lightning address, read from their Nostr profile.
   const address = wallet.address;
-  const hostedAddress = wallet.addressSource === "hosted";
-  // The browser's Breez wallet (funded by card top-ups) backs sending and
-  // shows its balance whenever no NIP-47 wallet is connected.
-  const breezActive = !wallet.connected && breez.available;
-  // The npub.cash wallet (Cashu proofs minted from received payments) backs
-  // the address itself: it is where received sats land.
-  const cashuActive = !wallet.connected && !breez.available && npubcash.available;
+  // Leftovers from the old hosted setup: an npub.cash address is custodial,
+  // so it should be replaced with the user's own wallet address.
+  const legacyNpubAddress = Boolean(address?.endsWith("@npub.cash"));
+  // The browser's Breez wallet is the primary, fully self-custodial wallet:
+  // its balance, sends, zaps and receive invoices all come from it. It also
+  // creates itself on first visit — no manual setup step.
+  const breezActive = breez.available || breez.creating;
+  // A NIP-47 wallet the user connected stays visible when no Crays wallet
+  // exists.
+  const nwcActive = !breezActive && wallet.connected;
 
-  const saveAddress = async () => {
-    if (!address) return;
+  const saveAddress = async (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
     setSavingAddress(true);
     try {
-      await nostr.updateProfile({ lud16: address });
+      await nostr.updateProfile({ lud16: trimmed });
+      setOwnAddress("");
+      setEditingAddress(false);
       toast.success("Lightning address saved to your profile");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Couldn't save the address.");
@@ -93,18 +98,17 @@ function WalletPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallet.connected]);
 
-  // Open the browser's Breez wallet so its balance shows up here. Cheap no-op
-  // when no seed exists locally.
+  // Open the browser's Breez wallet so its balance shows up here, creating it
+  // on first visit (the seed is generated locally; no manual step). Cheap
+  // no-op when card checkout isn't configured.
   useEffect(() => {
-    void breez.refresh();
+    if (breez.available) {
+      void breez.refresh();
+      return;
+    }
+    if (breez.canCreate) void breez.create();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Collect any newly paid npub.cash quotes and mint them into the balance.
-  useEffect(() => {
-    void npubcash.refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nostr.account?.pubkey]);
+  }, [breez.available]);
 
   return (
     <PageShell title="Wallet" subtitle="Self-custodial Lightning — your keys, your sats.">
@@ -117,63 +121,50 @@ function WalletPage() {
               "radial-gradient(at 80% 0%, oklch(0.7 0.2 50 / 0.5) 0, transparent 55%), radial-gradient(at 0% 100%, oklch(0.55 0.22 260 / 0.4) 0, transparent 55%)",
           }}
         />
-        <div className="relative grid gap-8 sm:grid-cols-[1.2fr_1fr] sm:items-center">
+        <div className="relative sm:items-center">
           <div>
             <div className="flex items-center gap-2">
               <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
                 Balance
               </p>
-              {wallet.connected ? (
-                <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300">
-                  {wallet.alias ?? "Connected"}
-                </span>
-              ) : breezActive ? (
+              {breezActive ? (
                 <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300">
                   Crays wallet
                 </span>
+              ) : wallet.connected ? (
+                <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300">
+                  {wallet.alias ?? "Connected"}
+                </span>
               ) : address ? (
                 <span className="rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">
-                  {hostedAddress ? "npub.cash" : "Receive-only"}
+                  External
                 </span>
               ) : null}
             </div>
-            {wallet.connected ? (
-              <div className="mt-2 flex items-baseline gap-2">
-                <h2 className="text-[40px] font-semibold tracking-tight sm:text-[52px]">
-                  {balance == null ? (wallet.loading ? "…" : "—") : balance.toLocaleString()}
-                </h2>
-                <span className="text-[14px] font-medium text-zinc-400">sats</span>
-              </div>
-            ) : breezActive ? (
+            {breezActive ? (
               <div className="mt-2 flex items-baseline gap-2">
                 <h2 className="text-[40px] font-semibold tracking-tight sm:text-[52px]">
                   {breez.balanceSats == null
-                    ? breez.loading
+                    ? breez.loading || breez.creating
                       ? "…"
                       : "—"
                     : breez.balanceSats.toLocaleString()}
                 </h2>
                 <span className="text-[14px] font-medium text-zinc-400">sats</span>
               </div>
-            ) : cashuActive ? (
+            ) : wallet.connected ? (
               <div className="mt-2 flex items-baseline gap-2">
                 <h2 className="text-[40px] font-semibold tracking-tight sm:text-[52px]">
-                  {npubcash.balanceSats == null
-                    ? npubcash.loading
-                      ? "…"
-                      : "—"
-                    : npubcash.balanceSats.toLocaleString()}
+                  {balance == null ? (wallet.loading ? "…" : "—") : balance.toLocaleString()}
                 </h2>
                 <span className="text-[14px] font-medium text-zinc-400">sats</span>
               </div>
             ) : address ? (
-              // Without a NIP-47 connection and without collected Cashu proofs,
-              // the sats live in an external wallet — show where instead of a
-              // balance-shaped dash.
+              // Without a self-custodial or NIP-47 wallet, the sats live in
+              // an external wallet — show where instead of a balance-shaped
+              // dash.
               <h2 className="mt-2 text-[24px] font-semibold tracking-tight sm:text-[30px]">
-                {hostedAddress
-                  ? "Held at npub.cash"
-                  : `Held in your ${address.split("@")[1] ?? "external"} wallet`}
+                Held in your {address.split("@")[1] ?? "external"} wallet
               </h2>
             ) : (
               <div className="mt-2 flex items-baseline gap-2">
@@ -182,29 +173,7 @@ function WalletPage() {
               </div>
             )}
             <p className="mt-1 text-[13px] text-zinc-400">
-              {wallet.connected ? (
-                <>
-                  ≈{" "}
-                  <span className="text-zinc-200">
-                    {formatUsd(
-                      balance != null && price ? (balance / 100_000_000) * price.usd : null,
-                    )}
-                  </span>{" "}
-                  {price ? "USD · live pricestr feed" : "· waiting for the BTC price"}
-                </>
-              ) : cashuActive ? (
-                <>
-                  ≈{" "}
-                  <span className="text-zinc-200">
-                    {formatUsd(
-                      npubcash.balanceSats != null && price
-                        ? (npubcash.balanceSats / 100_000_000) * price.usd
-                        : null,
-                    )}
-                  </span>{" "}
-                  USD · your npub.cash wallet
-                </>
-              ) : breezActive ? (
+              {breezActive ? (
                 <>
                   ≈{" "}
                   <span className="text-zinc-200">
@@ -214,16 +183,28 @@ function WalletPage() {
                         : null,
                     )}
                   </span>{" "}
-                  USD · self-custodial wallet in this browser
+                  USD
+                </>
+              ) : wallet.connected ? (
+                <>
+                  ≈{" "}
+                  <span className="text-zinc-200">
+                    {formatUsd(
+                      balance != null && price ? (balance / 100_000_000) * price.usd : null,
+                    )}
+                  </span>{" "}
+                  {price ? "USD · live pricestr feed" : "· waiting for the BTC price"}
                 </>
               ) : address ? (
-                hostedAddress ? (
-                  "Receiving at your npub.cash address — claim sats with your Nostr key."
+                legacyNpubAddress ? (
+                  "Your profile still points at a custodial npub.cash address — replace it with your own wallet's address."
                 ) : (
-                  "You can receive here now. Connect that wallet with Nostr Wallet Connect to see its balance and send sats."
+                  `Held at ${address.split("@")[1] ?? "your own"} address — connect it with Nostr Wallet Connect to spend here.`
                 )
+              ) : nostr.account ? (
+                "Your self-custodial wallet is being prepared, or add your own Lightning address."
               ) : (
-                "Sign in to derive a wallet from your Nostr identity."
+                "Sign in to set up your wallet."
               )}
             </p>
             <div className="mt-6 flex flex-wrap gap-2.5">
@@ -232,59 +213,14 @@ function WalletPage() {
               <Action label="Zap" icon={Zap} onClick={() => ui.openZap()} />
               <Action label="Top up" icon={CreditCard} onClick={ui.openTopUp} />
             </div>
+            {breez.creating && (
+              <p className="mt-3 text-[12px] font-medium text-zinc-300">
+                <Loader2 className="mr-1 inline size-3 animate-spin" /> Preparing your wallet…
+              </p>
+            )}
             {wallet.error && <p className="mt-3 text-[11.5px] text-rose-300">{wallet.error}</p>}
             {breezActive && breez.error && (
               <p className="mt-3 text-[11.5px] text-rose-300">{breez.error}</p>
-            )}
-            {cashuActive && npubcash.error && (
-              <p className="mt-3 text-[11.5px] text-rose-300">{npubcash.error}</p>
-            )}
-          </div>
-          <div className="relative ml-auto grid place-items-center rounded-2xl bg-white/5 p-5 ring-1 ring-white/10 backdrop-blur-sm">
-            {address ? (
-              <>
-                <div className="grid size-40 place-items-center rounded-xl bg-white p-3">
-                  <QRCodeSVG value={`lightning:${address}`} size={136} level="M" />
-                </div>
-                <p className="mt-3 max-w-[190px] break-all text-center font-mono text-[10.5px] text-zinc-400">
-                  {address}
-                </p>
-                <button
-                  onClick={() => {
-                    void navigator.clipboard.writeText(address);
-                    toast.success("Lightning address copied");
-                  }}
-                  className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-300 hover:underline"
-                >
-                  <Copy className="size-2.5" /> Copy lightning address
-                </button>
-                {hostedAddress && nostr.account && (
-                  <button
-                    onClick={() => void saveAddress()}
-                    disabled={savingAddress}
-                    className="mt-1 text-[10.5px] font-semibold text-zinc-400 hover:text-zinc-200 disabled:opacity-50"
-                  >
-                    {savingAddress ? "Saving…" : "Use on my profile"}
-                  </button>
-                )}
-              </>
-            ) : (
-              <div className="px-2 py-6 text-center">
-                <Wallet className="mx-auto size-8 text-zinc-500" />
-                <p className="mt-2 text-[11.5px] text-zinc-400">
-                  {nostr.account
-                    ? "Your Lightning address is being derived from your Nostr key."
-                    : "Sign in to derive a Lightning wallet from your Nostr identity."}
-                </p>
-                <button
-                  onClick={() =>
-                    nostr.account ? ui.openReceive() : ui.openAuth({ intent: "open your wallet" })
-                  }
-                  className="mt-3 rounded-full bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-white ring-1 ring-white/20 hover:bg-white/20"
-                >
-                  {nostr.account ? "Receive sats" : "Sign in"}
-                </button>
-              </div>
             )}
           </div>
         </div>
@@ -295,35 +231,23 @@ function WalletPage() {
         <StatCard
           label="Wallet"
           value={
-            wallet.connected
-              ? (wallet.alias ?? "Connected")
-              : breezActive
-                ? "Crays wallet"
-                : cashuActive
-                  ? "npub.cash"
-                  : address
-                    ? hostedAddress
-                      ? "npub.cash"
-                      : "Receive-only"
-                    : "Not connected"
+            breezActive
+              ? "Crays wallet"
+              : wallet.connected
+                ? (wallet.alias ?? "Connected")
+                : address
+                  ? `External (${address.split("@")[1] ?? "own"})`
+                  : "Not connected"
           }
         />
-        <StatCard
-          label="Network"
-          value={
-            wallet.network ??
-            (breezActive ? "Spark" : cashuActive ? "Cashu" : address ? "Lightning" : "—")
-          }
-        />
-        <StatCard label="Sats / USD" value={price ? formatUsd(price.usd / 100_000_000, 4) : "—"} />
         <StatCard
           label="BTC / USD"
           value={price ? formatUsd(price.usd, 0) : "—"}
-          sub="pricestr.xyz"
+          sub={price ? (<span className="text-xs text-zinc-500">Price by <a href="https://pricestr.xyz" target="_blank" className="underline">pricestr.xyz</a></span>) : undefined}
         />
       </section>
 
-      {!wallet.connected && !breez.available && <WalletConnectCard hasAddress={!!address} />}
+      <WalletConnectCard />
 
       {/* Transactions */}
       <section className="overflow-hidden rounded-2xl bg-white shadow-card ring-1 ring-black/5">
@@ -348,7 +272,7 @@ function WalletPage() {
           <p className="px-5 py-8 text-center text-[12.5px] text-zinc-500">
             {address
               ? "You can receive sats at your Lightning address. Connect a NIP-47 wallet to see payment history and send sats."
-              : "Sign in to derive your wallet from your Nostr identity."}
+              : "Create your self-custodial wallet or connect a NIP-47 wallet to see payment history."}
           </p>
         ) : transactions.length === 0 ? (
           <p className="px-5 py-8 text-center text-[12.5px] text-zinc-500">
@@ -408,19 +332,19 @@ function WalletPage() {
   );
 }
 
-function WalletConnectCard({ hasAddress }: { hasAddress: boolean }) {
+function WalletConnectCard() {
   const nostr = useNostr();
   const [uri, setUri] = useState("");
   const [busy, setBusy] = useState(false);
   return (
     <section className="rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5">
       <h3 className="text-[13px] font-semibold text-zinc-900">
-        {hasAddress ? "Add a wallet to send sats" : "Connect your Lightning wallet"}
+        Advanced · Connect an external wallet
       </h3>
       <p className="mt-1 text-[12px] text-zinc-500">
-        {hasAddress
-          ? "You can already receive at your Lightning address. Connect a Nostr Wallet Connect (NIP-47) wallet to send sats, pay invoices and zap creators."
-          : "Use a Nostr Wallet Connect (NIP-47) string from Alby, Zeus, Primal or your own node. Crays keeps it encrypted in this browser."}
+        For advanced users: connect a Nostr Wallet Connect (NIP-47) string from Alby, Zeus, Primal
+        or your own node to send sats, pay invoices and zap from another wallet. The self-custodial
+        Crays wallet keeps working either way.
       </p>
       <div className="mt-3 flex flex-col gap-2 sm:flex-row">
         <input
@@ -477,7 +401,7 @@ function Action({
   );
 }
 
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function StatCard({ label, value, sub }: { label: string; value: string; sub?: string | JSX.Element }) {
   return (
     <div className="rounded-2xl bg-white p-4 shadow-card ring-1 ring-black/5">
       <p className="text-[10.5px] font-semibold uppercase tracking-wider text-zinc-400">{label}</p>

@@ -10,7 +10,8 @@
  * actually starts a card purchase, so the normal app bundle stays small.
  */
 
-import type { BreezSdk, Seed, SdkEvent } from "@breeztech/breez-sdk-spark";
+import type { BreezSdk, LightningAddressInfo, Seed, SdkEvent } from "@breeztech/breez-sdk-spark";
+import { randomHex } from "@/lib/nostr/signer";
 
 const API_KEY = (import.meta.env.VITE_BREEZ_API_KEY as string | undefined)?.trim();
 
@@ -279,6 +280,42 @@ export function bolt11AmountSats(invoice: string): number | null {
             ? value / 10
             : value * 100_000_000;
   return Math.round(millisats / 1000);
+}
+
+/**
+ * A BOLT-11 invoice that pays directly into the browser wallet, so receiving
+ * stays self-custodial: it pays directly into the browser wallet.
+ */
+export async function receiveLightningInvoice(
+  amountSats: number,
+  memo = "Crays deposit",
+): Promise<{ invoice: string }> {
+  const sdk = await getBreezSdk();
+  const response = await sdk.receivePayment({
+    paymentMethod: { type: "bolt11Invoice", description: memo, amountSats },
+  });
+  return { invoice: response.paymentRequest };
+}
+
+/**
+ * The wallet's own self-custodial Lightning address: the account's npub
+ * registered as the username on Breez's LNURL server. Payments to it settle
+ * directly into the Spark wallet — no mint, no profile, no third party.
+ *
+ * Idempotent: a wallet that already registered an address keeps it.
+ */
+export async function ensureLightningAddress(npub: string): Promise<LightningAddressInfo> {
+  const sdk = await getBreezSdk();
+  const existing = await sdk.getLightningAddress();
+  if (existing) return existing;
+  const register = (username: string) =>
+    sdk.registerLightningAddress({ username, description: "Crays Lightning Wallet" });
+  if (await sdk.checkLightningAddressAvailable({ username: npub })) {
+    return register(npub);
+  }
+  // The npub username is taken on this domain (e.g. registered from another
+  // install whose wallet was reset): fall back to a distinguishable variant.
+  return register(`${npub.slice(0, 40)}-${randomHex(4)}`);
 }
 
 /**

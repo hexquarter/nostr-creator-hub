@@ -321,8 +321,7 @@ function CreatorDashboard() {
   const [loading, setLoading] = useState(false);
 
   const pubkey = nostr.account?.pubkey;
-  const lud16 = nostr.wallet.address;
-  const hostedAddress = nostr.wallet.addressSource === "hosted";
+  const lud16 = nostr.account?.profile.lud16;
 
   useEffect(() => {
     if (!pubkey) {
@@ -482,10 +481,8 @@ function CreatorDashboard() {
           value={lud16 ?? "Not set"}
           hint={
             !lud16
-              ? "Sign in to derive one from your Nostr key"
-              : hostedAddress
-                ? "npub.cash · derived from your Nostr key"
-                : "Ready to receive zaps"
+              ? "Add your own address in your profile — other apps pay you there"
+              : "Ready to receive zaps"
           }
           mono={!!lud16}
         />
