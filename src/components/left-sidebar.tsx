@@ -83,11 +83,11 @@ export function LeftSidebar() {
                 className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] font-medium transition-colors ${
                   active
                     ? "bg-brand/10 text-brand"
-                    : "text-zinc-600 hover:bg-zinc-100/80 hover:text-zinc-900"
+                    : to == '/premium' ? " text-amber-600 hover:bg-zinc-100/80" : "text-zinc-600 hover:bg-zinc-100/80 hover:text-zinc-900"
                 }`}
               >
                 <Icon
-                  className={`size-[18px] shrink-0 ${active ? "text-brand" : "text-zinc-400 group-hover:text-zinc-700"}`}
+                  className={`size-[18px] shrink-0 ${active ? "text-brand" : to == '/premium' ? " text-amber-600" : "text-zinc-400 group-hover:text-zinc-700"}`}
                   strokeWidth={2}
                 />
                 {label}
